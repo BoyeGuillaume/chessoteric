@@ -7,12 +7,12 @@ bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct BoardFlags: u8 {
         const WHITE_TO_MOVE = 1 << 0;
-        const WHITE_CAN_CASTLE_KINGSIDE = 1 << 1;
-        const WHITE_CAN_CASTLE_QUEENSIDE = 1 << 2;
-        const BLACK_CAN_CASTLE_KINGSIDE = 1 << 3;
-        const BLACK_CAN_CASTLE_QUEENSIDE = 1 << 4;
-        const WHITE_CASTLE = Self::WHITE_CAN_CASTLE_KINGSIDE.bits() | Self::WHITE_CAN_CASTLE_QUEENSIDE.bits();
-        const BLACK_CASTLE = Self::BLACK_CAN_CASTLE_KINGSIDE.bits() | Self::BLACK_CAN_CASTLE_QUEENSIDE.bits();
+        const WHITE_KING_SIDE_CASTLE = 1 << 1;
+        const WHITE_QUEEN_SIDE_CASTLE = 1 << 2;
+        const BLACK_KING_SIDE_CASTLE = 1 << 3;
+        const BLACK_QUEEN_SIDE_CASTLE = 1 << 4;
+        const WHITE_CASTLE = Self::WHITE_KING_SIDE_CASTLE.bits() | Self::WHITE_QUEEN_SIDE_CASTLE.bits();
+        const BLACK_CASTLE = Self::BLACK_KING_SIDE_CASTLE.bits() | Self::BLACK_QUEEN_SIDE_CASTLE.bits();
         const CASTLE = Self::WHITE_CASTLE.bits() | Self::BLACK_CASTLE.bits();
     }
 }
@@ -20,8 +20,8 @@ bitflags! {
 /// Represents the state of a chessboard, including the positions of all pieces and the current game state flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Board {
-    /// An array of bitboards, where each bitboard represents the positions of a specific piece type 
-    /// 
+    /// An array of bitboards, where each bitboard represents the positions of a specific piece type
+    ///
     /// The indexing of the bitboards is as follows:
     /// - Index 0: Pawn bitboard (both white and black pawns)
     /// - Index 1: Knight bitboard (both white and black knights)
@@ -40,7 +40,7 @@ pub struct Board {
     /// Flags representing the state of the board, such as which player's turn it is and castling rights.
     pub flags: BoardFlags,
 
-    /// The file index (0-7) of the en passant target square, or any value outside that range 
+    /// The file index (0-7) of the en passant target square, or any value outside that range
     /// if there is no en passant target square. For example, if a white pawn moves from e2 to e4,
     /// the en passant target square is e3, which corresponds to file index 4 (since files are
     /// indexed from 0 for 'a' to 7 for 'h').
@@ -97,12 +97,23 @@ impl Board {
         Self::from_fen(Self::DEFAULT_POSITION_FEN)
             .expect("Default position FEN should always be valid")
     }
-    
+
     pub fn get(&self, piece: Piece) -> &Bitboard {
-        debug_assert!(piece.is_white(), "get() should only be called with white pieces, since the bitboards are colorless and the white bitboard is used to determine the color of pieces on the board");
+        debug_assert!(
+            piece.is_white(),
+            "get() should only be called with white pieces, since the bitboards are colorless and the white bitboard is used to determine the color of pieces on the board"
+        );
         &self.bitboards[piece.colorless() as usize]
     }
-    
+
+    pub fn get_mut(&mut self, piece: Piece) -> &mut Bitboard {
+        debug_assert!(
+            piece.is_white(),
+            "get_mut() should only be called with white pieces, since the bitboards are colorless and the white bitboard is used to determine the color of pieces on the board"
+        );
+        &mut self.bitboards[piece.colorless() as usize]
+    }
+
     pub fn friendly_bitboard(&self) -> Bitboard {
         if self.flags.contains(BoardFlags::WHITE_TO_MOVE) {
             self.white
@@ -118,7 +129,7 @@ impl Board {
             self.white
         }
     }
-    
+
     pub fn next_to_move(&self) -> Color {
         if self.flags.contains(BoardFlags::WHITE_TO_MOVE) {
             Color::White
@@ -144,11 +155,7 @@ pub enum Color {
 
 impl Color {
     pub fn from_boolean_is_white(white: bool) -> Self {
-        if white {
-            Color::White
-        } else {
-            Color::Black
-        }
+        if white { Color::White } else { Color::Black }
     }
 
     pub fn opposite(self) -> Self {
@@ -169,7 +176,6 @@ impl Color {
         unsafe { Color::from_repr(repr).unwrap_unchecked() }
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, EnumIter, FromRepr)]
 #[repr(u8)]
@@ -437,7 +443,8 @@ impl SquareCentricBoard {
     }
 
     pub fn default_position() -> Self {
-        Self::parse_fen(Board::DEFAULT_POSITION_FEN).expect("Default position FEN should always be valid")
+        Self::parse_fen(Board::DEFAULT_POSITION_FEN)
+            .expect("Default position FEN should always be valid")
     }
 
     pub fn parse_fen(fen: &str) -> Result<Self, String> {
@@ -464,10 +471,10 @@ impl SquareCentricBoard {
                 } else if meta_index == 2 {
                     // Castling rights
                     match c {
-                        'K' => board.flags |= BoardFlags::WHITE_CAN_CASTLE_KINGSIDE,
-                        'Q' => board.flags |= BoardFlags::WHITE_CAN_CASTLE_QUEENSIDE,
-                        'k' => board.flags |= BoardFlags::BLACK_CAN_CASTLE_KINGSIDE,
-                        'q' => board.flags |= BoardFlags::BLACK_CAN_CASTLE_QUEENSIDE,
+                        'K' => board.flags |= BoardFlags::WHITE_KING_SIDE_CASTLE,
+                        'Q' => board.flags |= BoardFlags::WHITE_QUEEN_SIDE_CASTLE,
+                        'k' => board.flags |= BoardFlags::BLACK_KING_SIDE_CASTLE,
+                        'q' => board.flags |= BoardFlags::BLACK_QUEEN_SIDE_CASTLE,
                         '-' => {} // No castling rights
                         _ => {
                             return Err(format!(
@@ -582,28 +589,28 @@ impl SquareCentricBoard {
                 if self
                     .board
                     .flags
-                    .contains(BoardFlags::WHITE_CAN_CASTLE_KINGSIDE)
+                    .contains(BoardFlags::WHITE_KING_SIDE_CASTLE)
                 {
                     write!(f, "K")?;
                 }
                 if self
                     .board
                     .flags
-                    .contains(BoardFlags::WHITE_CAN_CASTLE_QUEENSIDE)
+                    .contains(BoardFlags::WHITE_QUEEN_SIDE_CASTLE)
                 {
                     write!(f, "Q")?;
                 }
                 if self
                     .board
                     .flags
-                    .contains(BoardFlags::BLACK_CAN_CASTLE_KINGSIDE)
+                    .contains(BoardFlags::BLACK_KING_SIDE_CASTLE)
                 {
                     write!(f, "k")?;
                 }
                 if self
                     .board
                     .flags
-                    .contains(BoardFlags::BLACK_CAN_CASTLE_QUEENSIDE)
+                    .contains(BoardFlags::BLACK_QUEEN_SIDE_CASTLE)
                 {
                     write!(f, "q")?;
                 }
@@ -620,7 +627,7 @@ impl SquareCentricBoard {
                         '3' // If it's black to move, the en passant target square is on rank 3
                     };
                     write!(f, " {}{}", file_char, rank_char)?;
-                } else { 
+                } else {
                     write!(f, " -")?;
                 }
 

@@ -1,9 +1,13 @@
-use std::time::Duration;
-use ratatui::{
-    DefaultTerminal, Frame, layout::{Constraint, Direction, Layout, Offset}, style::{Color, Style}, text::Span, widgets::{Block, Padding}
-};
 use crate::board::BoardWidget;
-
+use chessoteric_core::{ai::Ai, bitboard::Bitboard, moves::generate_moves};
+use ratatui::{
+    DefaultTerminal, Frame,
+    layout::{Constraint, Direction, Layout, Offset},
+    style::{Color, Style},
+    text::Span,
+    widgets::{Block, Padding},
+};
+use std::{env::args, time::Duration};
 
 const TITLE_STR: &str = r"   █████████  █████                                       █████                        ███          
   ███░░░░░███░░███                                       ░░███                        ░░░           
@@ -18,8 +22,11 @@ const TITLE_STR: &str = r"   █████████  █████       
 struct AppState {
     board: chessoteric_core::board::SquareCentricBoard,
     moves: Vec<String>,
+    highlighted_moves: Bitboard,
     buffer: String,
     cursor_position: u8,
+    selected_position: Option<u8>,
+    current_moves: Vec<chessoteric_core::moves::Move>,
 }
 
 impl Default for AppState {
@@ -27,17 +34,31 @@ impl Default for AppState {
         Self {
             board: chessoteric_core::board::SquareCentricBoard::default_position(),
             moves: Vec::new(),
+            highlighted_moves: Bitboard(0x0),
             buffer: String::new(),
             cursor_position: 0,
+            current_moves: Vec::new(),
+            selected_position: None,
         }
     }
 }
 
-pub fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+pub fn app(terminal: &mut DefaultTerminal) -> std::io::Result<String> {
+    let mut ai = chessoteric_core::ai::random::RandomAi::default();
     let mut state = AppState::default();
     state.moves.push("e4".to_string());
     state.moves.push("e5".to_string());
     state.moves.push("Nf3".to_string());
+
+    if args().len() > 1 {
+        state.board =
+            chessoteric_core::board::SquareCentricBoard::parse_fen(&args().nth(1).unwrap())
+                .unwrap();
+    }
+
+    let board = state.board.clone().into();
+    let mut in_check = false;
+    generate_moves(&board, &mut state.current_moves, &mut in_check);
 
     loop {
         terminal.draw(|frame| render(frame, &mut state))?;
@@ -46,15 +67,15 @@ pub fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
             let event = crossterm::event::read()?;
 
             match event {
-                crossterm::event::Event::Key(key_event) => {
+                crossterm::event::Event::Key(key_event)
                     if key_event.code == crossterm::event::KeyCode::Char('c')
                         && key_event
                             .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                    {
-                        break Ok(());
-                    }
-
+                            .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                {
+                    break Ok(format!("You entered: {}", state.board.fen()));
+                }
+                crossterm::event::Event::Key(key_event) => {
                     if key_event.is_press() || key_event.is_repeat() {
                         match key_event.code {
                             crossterm::event::KeyCode::Left => {
@@ -77,7 +98,69 @@ pub fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                                     state.cursor_position += 8;
                                 }
                             }
-                            crossterm::event::KeyCode::Enter => {}
+                            crossterm::event::KeyCode::Esc => {
+                                state.selected_position = None;
+                                state.highlighted_moves = Bitboard::empty();
+                            }
+                            crossterm::event::KeyCode::Enter
+                            | crossterm::event::KeyCode::Char(' ') => {
+                                if let Some(selected_position) = state.selected_position
+                                    && (state.highlighted_moves.0 & (1 << state.cursor_position))
+                                        != 0
+                                {
+                                    state.highlighted_moves = Bitboard::empty();
+
+                                    // Find the move that has the current cursor position as the destination square
+                                    if let Some(mv) = state.current_moves.iter().find(|mv| {
+                                        mv.to == state.cursor_position
+                                            && mv.from == selected_position
+                                    }) {
+                                        state.moves.push(mv.to_string());
+
+                                        let mut board = state.board.clone().into();
+                                        mv.apply(&mut board);
+
+                                        // Get the best move from the AI and apply it to the board
+                                        if let Some((ai_move, _)) = ai.best_move(&board) {
+                                            state.moves.push(ai_move.to_string());
+                                            ai_move.apply(&mut board);
+                                        }
+
+                                        // Finally, get the best move from the AI and apply it to the board
+                                        let new_board =
+                                            chessoteric_core::board::SquareCentricBoard::from(
+                                                board,
+                                            );
+                                        state.board = new_board;
+
+                                        // Regenerate moves for the new board state
+                                        state.current_moves.clear();
+                                        let mut in_check = false;
+                                        generate_moves(
+                                            &board,
+                                            &mut state.current_moves,
+                                            &mut in_check,
+                                        );
+                                    }
+
+                                    state.selected_position = None;
+                                } else {
+                                    state.selected_position = Some(state.cursor_position);
+
+                                    // Filter all moves that have start position equal to the cursor position
+                                    let mut bitboard = Bitboard::empty();
+                                    for mv in state.current_moves.iter().filter_map(|mv| {
+                                        if mv.from == state.cursor_position {
+                                            Some(mv.to)
+                                        } else {
+                                            None
+                                        }
+                                    }) {
+                                        bitboard.0 |= 1 << mv;
+                                    }
+                                    state.highlighted_moves = bitboard;
+                                }
+                            }
                             crossterm::event::KeyCode::Char(c) => state.buffer.push(c),
                             crossterm::event::KeyCode::Backspace => {
                                 state.buffer.pop();
@@ -122,12 +205,15 @@ fn render(frame: &mut Frame, state: &mut AppState) {
         .constraints([Constraint::Fill(1), Constraint::Length(27)])
         .split(middle_area);
 
-    frame.render_widget(BoardWidget {
-        board: &state.board,
-        selected: Some(state.cursor_position),
-        screen: frame.area(),
-        highlighted: chessoteric_core::bitboard::Bitboard(0x0),
-    }, middle_layout[0]);
+    frame.render_widget(
+        BoardWidget {
+            board: &state.board,
+            selected: Some(state.cursor_position),
+            screen: frame.area(),
+            highlighted: state.highlighted_moves,
+        },
+        middle_layout[0],
+    );
 
     // History of moves will go in the right half of the middle area, but we can leave it blank for now
     let history_block = Block::default()
@@ -150,7 +236,7 @@ fn render(frame: &mut Frame, state: &mut AppState) {
             frame.render_widget(
                 Span::raw(mv.to_string()),
                 history_block_area.offset(Offset::new(4, move_counter as i32)),
-            );  
+            );
         }
 
         // Render the black move in the right half of the history block

@@ -1,4 +1,5 @@
+pub mod ai;
 pub mod bitboard;
 pub mod board;
-pub mod moves;
 pub mod magic;
+pub mod moves;

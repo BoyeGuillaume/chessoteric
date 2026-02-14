@@ -7,5 +7,6 @@
         "**/Thumbs.db": true,
         "**/target": true,
         "**/.history": true
-    }
+    },
+    "editor.formatOnSave": true,
 }

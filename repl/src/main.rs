@@ -4,6 +4,7 @@ pub mod skin;
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install().unwrap();
-    ratatui::run(app::app)?;
+    let output = ratatui::run(app::app)?;
+    println!("{}", output);
     Ok(())
 }

@@ -23,7 +23,10 @@ impl<'a> Widget for BoardWidget<'a> {
         // buf.set_style(area, Style::default().bg(Color::Red));
 
         // First of all build a rectangle with an aspect ratio of 2:1, centered in the area
-        let size = area.height.min(area.width / BoardWidget::ASPECT_RATIO).max(8);
+        let size = area
+            .height
+            .min(area.width / BoardWidget::ASPECT_RATIO)
+            .max(8);
 
         // Determine the display mode based on the size of the area
         let display_mode = DisplayMode::from_size(size as usize / 8);
@@ -80,15 +83,30 @@ impl<'a> Widget for BoardWidget<'a> {
                 };
                 buf.set_style(square_rect, Style::default().bg(square_color).fg(fg_color));
 
-                if let Some(piece) = self.board.squares[rank as usize * 8 + file as usize] {
+                if let Some(piece) = self.board.squares[piece_index] {
                     let piece_char = display_from_str(piece, display_mode);
-                    let x = square_rect.x + (square_rect.width.saturating_sub(display_size * 2)) / 2;
-                    let mut y = square_rect.y + (square_rect.height.saturating_sub(display_size)) / 2;
+                    let x =
+                        square_rect.x + (square_rect.width.saturating_sub(display_size * 2)) / 2;
+                    let mut y =
+                        square_rect.y + (square_rect.height.saturating_sub(display_size)) / 2;
 
                     for line in piece_char.lines() {
                         buf.set_string(x, y, line, Style::default());
                         y += 1;
                     }
+                }
+
+                // If the square is highlighted, draw a border around it
+                if self.highlighted.0 & (1 << piece_index) != 0 {
+                    let border_style = Style::default().bg(Color::Rgb(255, 0, 0)).fg(fg_color);
+
+                    // Iterate over the rect
+                    let inner_rect = square_rect.inner(Margin {
+                        horizontal: 2,
+                        vertical: 1,
+                    });
+                    buf.set_style(square_rect, border_style);
+                    buf.set_style(inner_rect, Style::default().bg(square_color).fg(fg_color));
                 }
             }
         }
