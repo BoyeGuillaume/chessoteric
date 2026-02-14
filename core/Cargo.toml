@@ -1,0 +1,8 @@
+[package]
+name = "chessoteric-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bitflags = "2.10.0"
+strum = { version = "0.27.2", features = ["derive"] }
