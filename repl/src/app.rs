@@ -1,5 +1,5 @@
 use crate::board::BoardWidget;
-use chessoteric_core::{bitboard::Bitboard, moves::generate_moves};
+use chessoteric_core::{ai::AiLimit, bitboard::Bitboard, moves::generate_moves};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout, Offset},
@@ -46,7 +46,7 @@ impl Default for AppState {
 }
 
 pub fn app(terminal: &mut DefaultTerminal) -> std::io::Result<String> {
-    let mut ai = chessoteric_core::ai::get_ai("simple").unwrap();
+    let ai = chessoteric_core::ai::get_ai("simple").unwrap();
     let mut state = AppState::default();
 
     if args().len() > 1 {
@@ -120,12 +120,20 @@ pub fn app(terminal: &mut DefaultTerminal) -> std::io::Result<String> {
                                         mv.apply(&mut board);
 
                                         // Get the best move from the AI and apply it to the board
-                                        if let Some((ai_move, ai_score)) =
-                                            ai.best_move(&board, std::time::Duration::from_secs(1))
+                                        if ai.start(&board, AiLimit::default())
+                                            == chessoteric_core::ai::AiType::Async
                                         {
+                                            // Wait for 500 milliseconds before checking
+                                            std::thread::sleep(std::time::Duration::from_millis(
+                                                500,
+                                            ));
+                                        }
+                                        let ai_result = ai.stop();
+                                        if let Some(ai_result) = ai_result {
+                                            let ai_move = ai_result.best_move;
                                             state.moves.push(ai_move.to_string());
                                             ai_move.apply(&mut board);
-                                            state.current_score = ai_score;
+                                            state.current_score = ai_result.score;
                                         }
 
                                         // Finally, get the best move from the AI and apply it to the board

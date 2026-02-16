@@ -8,6 +8,7 @@ from colorama import Fore
 from colorama import Style
 import time
 from os.path import dirname, join, abspath
+import chess.engine
 
 colorama_init()
 
@@ -15,7 +16,8 @@ colorama_init()
 load_dotenv()
 API_TOKEN = os.getenv("LICHESS_API_KEY")
 WORKSPACE_PATH = dirname(dirname(abspath(__file__)))
-ENGINE_PATH = join(WORKSPACE_PATH, "target", "release", "sterm")
+ENGINE_PATH = [join(WORKSPACE_PATH, "target", "release", "sterm"), "--ai", "simple"]
+# ENGINE_PATH = "/usr/bin/stockfish"
 
 print(f"{Fore.LIGHTGREEN_EX}[+] Starting Lichess Bot...{Style.RESET_ALL}")
 session = berserk.TokenSession(API_TOKEN)
@@ -29,25 +31,18 @@ class Game(threading.Thread):
         self.stream = client.bots.stream_game_state(game_id)
         self.current_state = next(self.stream)
         self.username = username
-        self.subprocess = subprocess.Popen([ENGINE_PATH, "--no-output"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        self.subprocess.stdin.write(f"load_ai simple\n")
-        self.subprocess.stdin.write(f"reset \"{initial_fen}\"\n")
         self.stopped = False
-        print(f"{Fore.GREEN}[+] Engine process started with PID: {self.subprocess.pid}{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}[+] Initial FEN sent to engine: {initial_fen}{Style.RESET_ALL}")
-        self.subprocess.stdin.flush()
-        self.player_color = player_color
+        self.engine = chess.engine.SimpleEngine.popen_uci(ENGINE_PATH)
+        self.board = chess.Board(initial_fen)
 
-        if self.is_my_turn():
+        print(f"{Fore.GREEN}[+] Engine process started {self.engine}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[+] Initial FEN sent to engine: {initial_fen}{Style.RESET_ALL}")
+        self.player_color = chess.WHITE if player_color.lower() == 'white' else chess.BLACK
+
+        if self.board.turn == self.player_color:
             print(f"{Fore.YELLOW}[!] It's our turn to move!{Style.RESET_ALL}")
             self.generate_next_move()
     
-    def is_my_turn(self):
-        self.subprocess.stdin.write("color\n")
-        self.subprocess.stdin.flush()
-        color = self.subprocess.stdout.readline().strip()
-        return color == self.player_color
-
     def run(self):
         for event in self.stream:
             if self.stopped:
@@ -59,32 +54,42 @@ class Game(threading.Thread):
                 self.handle_chat_line(event)
     
     def generate_next_move(self):
-        self.subprocess.stdin.write("generate\n")
-        self.subprocess.stdin.flush()
-        outputs = self.subprocess.stdout.readline().strip()
-        if outputs == "":
-            print(f"{Fore.RED}[!] No output from engine, cannot generate move{Style.RESET_ALL}")
+        limit = chess.engine.Limit(time=2.0)
+        elem = self.engine.play(self.board, limit=limit)
+
+        if elem.move is None:
+            print(f"{Fore.RED}[!] Engine failed to generate a move, resigning...{Style.RESET_ALL}")
+            self.client.bots.resign_game(self.game_id)
             return
         else:
-            move, score = outputs.split(',')
-            score = float(score)
-            print(f"{Fore.CYAN}[+] Engine recommends move '{move}' with score: {score}{Style.RESET_ALL}")
+            self.client.bots.make_move(self.game_id, elem.move)
+            print(f"{Fore.CYAN}[+] Engine recommends move '{elem.move}'{Style.RESET_ALL}")
 
-            # self.subprocess.stdin.write(f"move {move}\n")
-            # self.subprocess.stdin.flush()
-            self.client.bots.make_move(self.game_id, move)
+        # self.subprocess.stdin.flush()
+        # outputs = self.subprocess.stdout.readline().strip()
+        # if outputs == "":
+        #     print(f"{Fore.RED}[!] No output from engine, cannot generate move{Style.RESET_ALL}")
+        #     return
+        # else:
+        #     move, score = outputs.split(',')
+        #     score = float(score)
+        #     print(f"{Fore.CYAN}[+] Engine recommends move '{move}' with score: {score}{Style.RESET_ALL}")
+
+        #     # self.subprocess.stdin.write(f"move {move}\n")
+        #     # self.subprocess.stdin.flush()
+        #     self.client.bots.make_move(self.game_id, move)
 
     def handle_state_change(self, game_state):
         if game_state['status'] != 'started':
             print(f"{Fore.YELLOW}[!] Game {self.game_id} ended with status: {game_state['status']}{Style.RESET_ALL}")
             self.kill()
+            return
 
         move = game_state['moves'].split()[-1]
         print(f"{Fore.BLUE}[GAME STATE] Game {self.game_id} play {move}{Style.RESET_ALL}")
-        self.subprocess.stdin.write(f"move {move}\n")
-        self.subprocess.stdin.flush()
-
-        if self.is_my_turn():
+        self.board.push_uci(move)
+        
+        if self.board.turn == self.player_color:
             self.generate_next_move()
 
         # Send back the move recommended by the engine
@@ -96,10 +101,11 @@ class Game(threading.Thread):
         self.client.bots.post_message(self.game_id, "Nice game! Thanks for playing :)")
         self.stopped = True
         self.stream.close()
-        self.subprocess.stdin.write("exit\n")
-        time.sleep(0.5)  # Give the subprocess some time to exit gracefully
-        # self.subprocess.stdin.flush()
-        self.subprocess.terminate()
+        self.engine.quit()
+        # self.subprocess.stdin.write("exit\n")
+        # time.sleep(0.5)  # Give the subprocess some time to exit gracefully
+        # # self.subprocess.stdin.flush()
+        # self.subprocess.terminate()
 
     def handle_chat_line(self, chat_line):
         print(f"{Fore.MAGENTA}[CHAT] {chat_line['username']}: {chat_line['text']}{Style.RESET_ALL}")

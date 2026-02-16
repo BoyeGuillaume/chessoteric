@@ -14,9 +14,13 @@ pub struct StermArgs {
     )]
     pub fen: String,
 
-    /// A flag to disable use output (useful when using application as a subprocess)
-    #[clap(short, long)]
-    pub no_output: bool,
+    /// A flag helping human understand that the output is meant for them and not for a bot (e.g. when running in a lichess bot)
+    #[clap(long)]
+    pub human: bool,
+
+    /// Load a specific ai at startup
+    #[clap(long)]
+    pub ai: Option<String>,
 }
 
 fn main() {
@@ -26,14 +30,27 @@ fn main() {
     let mut state = state::AppState {
         board: chessoteric_core::board::Board::from_fen(&args.fen).expect("Invalid FEN string"),
         ai: None,
+        ai_state: state::AiState::Idle,
         args,
-        time_per_move: std::time::Duration::from_secs(1),
     };
     let commands = state::all_commands();
 
+    // Load the AI if specified in the arguments
+    if let Some(ai_name) = &state.args.ai {
+        match chessoteric_core::ai::get_ai(ai_name) {
+            Some(ai) => {
+                state.ai = Some(ai);
+            }
+            None => {
+                eprintln!("Unknown AI: {}, available AIs are: simple, random", ai_name);
+                std::process::exit(1);
+            }
+        }
+    }
+
     'mainloop: loop {
         // Read user input for a move
-        if !state.args.no_output {
+        if state.args.human {
             print!("[chess] $ ");
             io::stdout().flush().expect("Failed to flush stdout");
         }
@@ -77,13 +94,9 @@ fn main() {
         }
 
         // If we reach this point, the command is unknown
-        if !state.args.no_output {
-            eprintln!(
-                "Unknown command: {}, type 'help' for a list of commands",
-                args[0]
-            );
-        } else {
-            std::process::exit(1);
-        }
+        eprintln!(
+            "Unknown command: {}, type 'help' for a list of commands",
+            args[0]
+        );
     }
 }

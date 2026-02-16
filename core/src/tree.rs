@@ -52,6 +52,10 @@ impl<T> Tree<T> {
             node_ref,
         }
     }
+
+    pub fn node_count(&self) -> usize {
+        self.container.len()
+    }
 }
 
 /// A reference to a node in the tree, which allows us to navigate the tree structure.

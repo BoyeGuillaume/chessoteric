@@ -1,22 +1,19 @@
-use std::usize;
+use std::{
+    cell::RefCell,
+    sync::{Arc, atomic::AtomicBool},
+};
 
 use bitflags::bitflags;
 use strum::{EnumIs, EnumTryAs};
 
 use crate::{
-    ai::Ai,
+    ai::{Ai, AiLimit, AiResult},
     board::{Board, Color, Piece},
     moves::{Move, generate_moves},
-    tree::{Tree, TreeNodeRef, TreeRef},
+    tree::{Tree, TreeNodeRef},
 };
 
-pub struct SimpleAi {}
-
-impl std::default::Default for SimpleAi {
-    fn default() -> Self {
-        SimpleAi {}
-    }
-}
+use super::AiType;
 
 fn simple_evaluation(board: &crate::board::Board) -> f32 {
     // A very simple evaluation function that just counts material
@@ -67,35 +64,60 @@ impl TreeEntry {
 
     fn should_evaluate(&self, epoch: u16) -> bool {
         // We should evaluate this entry if it's not terminal and we haven't evaluated it at this depth before
-        !self.is_terminal() && self.depth < epoch && self.depth < 3
+        !self.is_terminal() && self.depth < epoch
     }
 }
 
-// fn display_tree(tree: TreeRef<'_, TreeEntry>, indent: usize, depth: usize) {
-//     if let Some(mv) = tree.r#move {
-//         println!("{}Move: {}, score: {}", "  ".repeat(indent), mv, tree.score);
-//     } else {
-//         println!("{}Root -- {}", "  ".repeat(indent), tree.board.fen());
-//     }
+struct SimpleAiCtx {
+    tree: Tree<TreeEntry>,
+}
 
-//     if depth > 0 {
-//         let mut child_opt = tree.child();
-//         while let Some(child) = child_opt {
-//             display_tree(child, indent + 1, depth - 1);
-//             child_opt = child.next();
-//         }
-//     }
-// }
+impl SimpleAiCtx {
+    fn derive_results(&self) -> Option<AiResult> {
+        let mut pv = Vec::new();
+        let mut current = self.tree.get(TreeNodeRef::ROOT);
 
-impl Ai for SimpleAi {
-    fn best_move(&mut self, board: &Board, timeout: std::time::Duration) -> Option<(Move, f32)> {
-        let mut tree = Tree::new(TreeEntry {
-            r#move: None,
-            depth: 0,
-            score: simple_evaluation(board),
-            board: board.clone(),
-            flags: TerminalFlags::empty(),
-        });
+        while let Some(mut child) = current.child() {
+            // Iterate over all siblings to find the one with the best score
+            let current_color = current.board.next_to_move();
+            let mut best_child = child;
+            while let Some(sibling) = child.next() {
+                if current_color.minmax_cmp(sibling.score, best_child.score) {
+                    best_child = sibling;
+                }
+                child = sibling;
+            }
+
+            // Then we add the best_child as the next move in the principal variation and continue down the tree
+            current = best_child;
+            if let Some(mv) = current.r#move {
+                pv.push(mv);
+            } else {
+                break;
+            }
+        }
+
+        if pv.is_empty() {
+            return None;
+        }
+
+        Some(AiResult {
+            best_move: pv[0],
+            depth: pv.len() as u16,
+            pv,
+            nodes: self.tree.node_count(),
+            score: self.tree.get(TreeNodeRef::ROOT).score,
+        })
+    }
+
+    fn run(&mut self, limits: AiLimit, stop_signal: Arc<AtomicBool>) {
+        // let mut tree = Tree::new(TreeEntry {
+        //     r#move: None,
+        //     depth: 0,
+        //     score: simple_evaluation(&self.board),
+        //     board: self.board.clone(),
+        //     flags: TerminalFlags::empty(),
+        // });
 
         // Stack for our iterative deepening search, which will contain references to tree nodes
         // alongside the phase
@@ -107,19 +129,32 @@ impl Ai for SimpleAi {
         let mut stack = Vec::new();
         let mut moves = Vec::new();
 
-        let start_time = std::time::Instant::now();
         let mut epoch = 0u16;
+        let start_time = std::time::Instant::now();
         loop {
             // While we have time, we will perform a depth-limited search, increasing the depth limit (epoch) with each iteration
-            if start_time.elapsed() >= timeout {
+            if stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
                 break;
+            }
+
+            // If we have a time limit and we are close to it, we should stop the search to avoid overshooting
+            if let Some(movetime) = limits.movetime {
+                if start_time.elapsed() >= movetime {
+                    break;
+                }
+            }
+
+            if let Some(depth_limit) = limits.depth {
+                if epoch >= depth_limit {
+                    break;
+                }
             }
 
             // Pop last element from the stack
             match stack.pop() {
                 Some(StackEntry::Evaluating(noderef)) => {
                     // Get the tree entry for this node reference, then three possiblity
-                    let mut entry = tree.get_mut(noderef);
+                    let mut entry = self.tree.get_mut(noderef);
                     let next_to_move = entry.board.next_to_move();
 
                     if let Some(child_noderef) = entry.child_noderef() {
@@ -170,7 +205,8 @@ impl Ai for SimpleAi {
                             }
 
                             // Push the first child for evaluation, the rest will be pushed when we backtrack
-                            let first_child_noderef = tree.get(noderef).child().unwrap().noderef();
+                            let first_child_noderef =
+                                self.tree.get(noderef).child().unwrap().noderef();
                             stack
                                 .push(StackEntry::Backtracking(noderef, next_to_move.minmax_ini()));
                             stack.push(StackEntry::Evaluating(first_child_noderef));
@@ -180,7 +216,7 @@ impl Ai for SimpleAi {
                     }
                 }
                 Some(StackEntry::Backtracking(noderef, current_score)) => {
-                    let mut entry = tree.get_mut(noderef);
+                    let mut entry = self.tree.get_mut(noderef);
                     let next_sibling_noderef = entry.next_noderef();
                     entry.score = current_score;
 
@@ -190,7 +226,7 @@ impl Ai for SimpleAi {
                         let (parent_noderef, parent_score) =
                             parent_stack_entry.try_as_backtracking_mut().unwrap();
 
-                        let parent_color = tree.get(*parent_noderef).board.next_to_move();
+                        let parent_color = self.tree.get(*parent_noderef).board.next_to_move();
                         *parent_score = parent_color.minmax(*parent_score, current_score);
                     }
 
@@ -204,24 +240,121 @@ impl Ai for SimpleAi {
                     // If the stack is empty, we need to start a new search from the root
                     epoch += 1;
                     stack.push(StackEntry::Evaluating(TreeNodeRef::ROOT));
+
+                    // Print some debug info about the current search
+                    if let Some(result) = self.derive_results() {
+                        println!(
+                            "info depth {} score {} nodes {} time {} pv {}",
+                            epoch,
+                            self.tree.get(TreeNodeRef::ROOT).score,
+                            self.tree.node_count(),
+                            start_time.elapsed().as_millis(),
+                            result
+                                .pv
+                                .iter()
+                                .map(|mv| mv.to_string())
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        );
+                    }
                 }
             }
         }
+    }
+}
 
-        // After we have exhausted our time, the best move will be the child of the root with the best score
-        let root_entry = tree.get(TreeNodeRef::ROOT);
-        let color = root_entry.board.next_to_move();
-        let mut best_move = None;
-        let mut best_score = color.minmax_ini();
-        let mut child_noderef_opt = root_entry.child();
-        while let Some(child) = child_noderef_opt {
-            if color.minmax_cmp(child.score, best_score) {
-                best_score = child.score;
-                best_move = child.r#move;
-            }
-            child_noderef_opt = child.next();
+pub struct SimpleAi {
+    ctx: RefCell<Option<SimpleAiCtx>>,
+    stop_signal: Arc<AtomicBool>,
+    thread: RefCell<Option<std::thread::JoinHandle<SimpleAiCtx>>>,
+}
+
+impl std::default::Default for SimpleAi {
+    fn default() -> Self {
+        SimpleAi {
+            ctx: RefCell::new(None),
+            stop_signal: Arc::new(AtomicBool::new(false)),
+            thread: RefCell::new(None),
+        }
+    }
+}
+
+// fn display_tree(tree: TreeRef<'_, TreeEntry>, indent: usize, depth: usize) {
+//     if let Some(mv) = tree.r#move {
+//         println!("{}Move: {}, score: {}", "  ".repeat(indent), mv, tree.score);
+//     } else {
+//         println!("{}Root -- {}", "  ".repeat(indent), tree.board.fen());
+//     }
+
+//     if depth > 0 {
+//         let mut child_opt = tree.child();
+//         while let Some(child) = child_opt {
+//             display_tree(child, indent + 1, depth - 1);
+//             child_opt = child.next();
+//         }
+//     }
+// }
+
+impl Ai for SimpleAi {
+    fn name(&self) -> &str {
+        "Random_AI"
+    }
+
+    fn authors(&self) -> &[&str] {
+        &["Guillaume Boyé"]
+    }
+
+    fn start(&self, board: &Board, limits: AiLimit) -> AiType {
+        if self.thread.borrow().is_some() {
+            self.stop_signal
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            self.thread.borrow_mut().take().unwrap().join().unwrap();
         }
 
-        best_move.map(|mv| (mv, best_score))
+        // We will spawn a new thread for the AI to run in, and store the context in the main struct so that we can communicate with it
+        let ctx = SimpleAiCtx {
+            tree: Tree::new(TreeEntry {
+                r#move: None,
+                depth: 0,
+                score: simple_evaluation(board),
+                board: board.clone(),
+                flags: TerminalFlags::empty(),
+            }),
+        };
+
+        // Create a new thread
+        self.stop_signal
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let stop_signal = self.stop_signal.clone();
+        let thread_handle = std::thread::spawn(move || {
+            let mut ctx = ctx;
+            ctx.run(limits, stop_signal.clone());
+            ctx
+        });
+
+        // Store the thread handle and context in the main struct
+        self.thread.borrow_mut().replace(thread_handle);
+        AiType::Async
+    }
+
+    fn stop(&self) -> Option<super::AiResult> {
+        // Signal the thread to stop and wait for it to finish, then return the best move found
+        self.stop_signal
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        let ctx = self.thread.borrow_mut().take().unwrap().join().unwrap();
+        self.ctx.borrow_mut().replace(ctx);
+        let ctx = self.ctx.borrow();
+        ctx.as_ref().unwrap().derive_results()
+    }
+
+    fn reset(&self) {
+        // We can simply stop the current thread and clear the context, the next time start is called a new search will be launched from scratch
+        self.stop_signal
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(thread) = self.thread.borrow_mut().take() {
+            thread.join().unwrap();
+        }
+        self.ctx.borrow_mut().take();
     }
 }
