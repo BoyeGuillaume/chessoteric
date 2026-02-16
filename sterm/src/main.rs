@@ -27,6 +27,7 @@ fn main() {
         board: chessoteric_core::board::Board::from_fen(&args.fen).expect("Invalid FEN string"),
         ai: None,
         args,
+        time_per_move: std::time::Duration::from_secs(1),
     };
     let commands = state::all_commands();
 

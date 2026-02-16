@@ -1,4 +1,4 @@
-use crate::bitboard::Bitboard;
+use crate::bitboard::{Bitboard, square_to_algebraic};
 use bitflags::bitflags;
 use strum::{EnumIter, FromRepr, IntoEnumIterator};
 
@@ -174,6 +174,49 @@ impl Color {
 
         // SAFETY: The caller must ensure that repr is a valid representation of a Color (0 or 1).
         unsafe { Color::from_repr(repr).unwrap_unchecked() }
+    }
+
+    pub fn score_multiplier(self) -> f32 {
+        match self {
+            Color::White => 1.0,
+            Color::Black => -1.0,
+        }
+    }
+
+    pub fn infinity(self) -> f32 {
+        match self {
+            Color::White => f32::INFINITY,
+            Color::Black => f32::NEG_INFINITY,
+        }
+    }
+
+    pub fn minmax_ini(self) -> f32 {
+        match self {
+            Color::White => f32::NEG_INFINITY,
+            Color::Black => f32::INFINITY,
+        }
+    }
+
+    pub fn at_depth(self, depth: usize) -> Color {
+        if depth % 2 == 0 {
+            self
+        } else {
+            self.opposite()
+        }
+    }
+
+    pub fn minmax(&self, a: f32, b: f32) -> f32 {
+        match self {
+            Color::White => a.max(b),
+            Color::Black => a.min(b),
+        }
+    }
+
+    pub fn minmax_cmp(&self, a: f32, b: f32) -> bool {
+        match self {
+            Color::White => a > b,
+            Color::Black => a < b,
+        }
     }
 }
 
@@ -486,18 +529,15 @@ impl SquareCentricBoard {
                 } else if meta_index == 3 {
                     // En passant target square
                     if c == '-' {
-                        board.en_passant_square = 8; // No en passant target square
+                        board.en_passant_square = 64;
                     } else if c.is_ascii_alphabetic() && c.is_ascii_lowercase() {
-                        let file_char = c as u8;
-                        if file_char < b'a' || file_char > b'h' {
-                            return Err(format!(
-                                "Invalid FEN: expected file character 'a'-'h' for en passant target square, got '{}'",
-                                c
-                            ));
+                        board.en_passant_square = (c as u8 - b'a') % 8; // Convert file character to index (0-7)
+                        if board.flags.contains(BoardFlags::WHITE_TO_MOVE) {
+                            board.en_passant_square += 40;
+                        } else {
+                            board.en_passant_square += 16;
                         }
-                        board.en_passant_square = file_char - b'a';
                     } else if c.is_digit(10) {
-                        // Passes the halfmove clock and fullmove number sections, which we currently ignore
                     } else {
                         return Err(format!(
                             "Invalid FEN: unexpected character '{}' in en passant section",
@@ -619,14 +659,8 @@ impl SquareCentricBoard {
                 }
 
                 // En passant target square
-                if self.board.en_passant_square < 8 {
-                    let file_char = (b'a' + self.board.en_passant_square) as char;
-                    let rank_char = if self.board.flags.contains(BoardFlags::WHITE_TO_MOVE) {
-                        '6' // If it's white to move, the en passant target square is on rank 6
-                    } else {
-                        '3' // If it's black to move, the en passant target square is on rank 3
-                    };
-                    write!(f, " {}{}", file_char, rank_char)?;
+                if self.board.en_passant_square < 64 {
+                    write!(f, " {}", square_to_algebraic(self.board.en_passant_square))?;
                 } else {
                     write!(f, " -")?;
                 }

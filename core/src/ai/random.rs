@@ -13,7 +13,11 @@ impl std::default::Default for RandomAi {
 }
 
 impl Ai for RandomAi {
-    fn best_move(&mut self, board: &crate::board::Board) -> Option<(crate::moves::Move, f32)> {
+    fn best_move(
+        &mut self,
+        board: &crate::board::Board,
+        _timeout: std::time::Duration,
+    ) -> Option<(crate::moves::Move, f32)> {
         // Generate moves
         let mut moves = Vec::new();
         let mut currently_in_check = false;

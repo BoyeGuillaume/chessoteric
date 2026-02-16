@@ -14,7 +14,7 @@ colorama_init()
 
 load_dotenv()
 API_TOKEN = os.getenv("LICHESS_API_KEY")
-ENGINE_PATH = join(dirname(dirname(abspath(__file__))), "target", "debug", "sterm")
+ENGINE_PATH = join(dirname(dirname(abspath(__file__))), "target", "release", "sterm")
 
 print(f"{Fore.LIGHTGREEN_EX}[+] Starting Lichess Bot...{Style.RESET_ALL}")
 session = berserk.TokenSession(API_TOKEN)
@@ -29,7 +29,7 @@ class Game(threading.Thread):
         self.current_state = next(self.stream)
         self.username = username
         self.subprocess = subprocess.Popen([ENGINE_PATH, "--no-output"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        self.subprocess.stdin.write(f"load_ai random\n")
+        self.subprocess.stdin.write(f"load_ai simple\n")
         self.subprocess.stdin.write(f"reset \"{initial_fen}\"\n")
         self.stopped = False
         print(f"{Fore.GREEN}[+] Engine process started with PID: {self.subprocess.pid}{Style.RESET_ALL}")

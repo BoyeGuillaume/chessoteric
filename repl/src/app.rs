@@ -1,11 +1,11 @@
 use crate::board::BoardWidget;
-use chessoteric_core::{ai::Ai, bitboard::Bitboard, moves::generate_moves};
+use chessoteric_core::{bitboard::Bitboard, moves::generate_moves};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout, Offset},
     style::{Color, Style},
     text::Span,
-    widgets::{Block, Padding},
+    widgets::{Block, Borders, Gauge, Padding},
 };
 use std::{env::args, time::Duration};
 
@@ -27,6 +27,7 @@ struct AppState {
     cursor_position: u8,
     selected_position: Option<u8>,
     current_moves: Vec<chessoteric_core::moves::Move>,
+    current_score: f32,
 }
 
 impl Default for AppState {
@@ -39,16 +40,14 @@ impl Default for AppState {
             cursor_position: 0,
             current_moves: Vec::new(),
             selected_position: None,
+            current_score: 0.0,
         }
     }
 }
 
 pub fn app(terminal: &mut DefaultTerminal) -> std::io::Result<String> {
-    let mut ai = chessoteric_core::ai::random::RandomAi::default();
+    // let mut ai = chessoteric_core::ai::get_ai("simple").unwrap();
     let mut state = AppState::default();
-    state.moves.push("e4".to_string());
-    state.moves.push("e5".to_string());
-    state.moves.push("Nf3".to_string());
 
     if args().len() > 1 {
         state.board =
@@ -121,10 +120,13 @@ pub fn app(terminal: &mut DefaultTerminal) -> std::io::Result<String> {
                                         mv.apply(&mut board);
 
                                         // Get the best move from the AI and apply it to the board
-                                        if let Some((ai_move, _)) = ai.best_move(&board) {
-                                            state.moves.push(ai_move.to_string());
-                                            ai_move.apply(&mut board);
-                                        }
+                                        // if let Some((ai_move, ai_score)) =
+                                        //     ai.best_move(&board, std::time::Duration::from_secs(1))
+                                        // {
+                                        //     state.moves.push(ai_move.to_string());
+                                        //     ai_move.apply(&mut board);
+                                        //     state.current_score = ai_score;
+                                        // }
 
                                         // Finally, get the best move from the AI and apply it to the board
                                         let new_board =
@@ -249,20 +251,20 @@ fn render(frame: &mut Frame, state: &mut AppState) {
     }
 
     // Render the commands in the bottom 20% of the layout
-    let input_area = layout[2];
-    let input_block = Block::default()
-        .title("Input")
-        .padding(Padding::symmetric(3, 0))
-        .borders(ratatui::widgets::Borders::ALL);
-    let input_block_area = input_block.inner(input_area);
+    fn title_block(title: &str) -> Block<'_> {
+        let title = ratatui::text::Line::from(title).centered();
+        Block::new()
+            .borders(Borders::NONE)
+            .padding(Padding::vertical(1))
+            .title(title)
+    }
+    let ratio = ((state.current_score as f64 + 5.0) / 10.0).clamp(0.0, 1.0);
 
-    frame.render_widget(input_block, input_area);
     frame.render_widget(
-        ratatui::widgets::Paragraph::new(state.buffer.as_str()),
-        input_block_area,
+        Gauge::default()
+            .block(title_block("title"))
+            .ratio(ratio)
+            .label(format!("{:.1}", state.current_score)),
+        layout[2],
     );
-    frame.set_cursor_position((
-        input_block_area.x + state.buffer.len() as u16,
-        input_block_area.y,
-    ));
 }

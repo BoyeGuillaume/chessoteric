@@ -1,4 +1,4 @@
-use chessoteric_core::ai::Ai;
+use chessoteric_core::ai::{Ai, get_ai};
 use clap::Parser;
 
 use crate::StermArgs;
@@ -7,6 +7,7 @@ pub struct AppState {
     pub args: StermArgs,
     pub board: chessoteric_core::board::Board,
     pub ai: Option<Box<dyn Ai>>,
+    pub time_per_move: std::time::Duration,
 }
 
 pub trait Command {
@@ -26,6 +27,7 @@ pub fn all_commands() -> Vec<Box<dyn Command>> {
         Box::new(ListMovesCommand),
         Box::new(GenerateCommand),
         Box::new(ColorCommand),
+        Box::new(SetThinkTimeCommand),
     ]
 }
 
@@ -93,14 +95,14 @@ impl Command for LoadAiCommand {
             return;
         }
         let ai_name = &args[1];
-        match ai_name.as_str() {
-            "random" => {
-                state.ai = Some(Box::new(chessoteric_core::ai::random::RandomAi::default()));
+        match get_ai(ai_name) {
+            Some(ai) => {
+                state.ai = Some(ai);
                 if !state.args.no_output {
-                    println!("Loaded random AI");
+                    println!("Loaded AI: {}", ai_name);
                 }
             }
-            _ => eprintln!("Unknown AI name: {}", ai_name),
+            None => eprintln!("Unknown AI name: {}", ai_name),
         }
     }
 }
@@ -177,8 +179,35 @@ impl Command for ListMovesCommand {
         let mut moves = Vec::new();
         let mut currently_in_check = false;
         chessoteric_core::moves::generate_moves(&state.board, &mut moves, &mut currently_in_check);
-        for mv in moves {
-            println!("{}", mv.uci());
+        for mv in &moves {
+            println!("{}", mv.algebraic_notation(&state.board, &moves));
+        }
+    }
+}
+
+pub struct SetThinkTimeCommand;
+impl Command for SetThinkTimeCommand {
+    fn name(&self) -> &str {
+        "think_time"
+    }
+
+    fn description(&self) -> &str {
+        "Set the time per move for the AI (in seconds)"
+    }
+
+    fn execute(&self, state: &mut AppState, args: &[String]) {
+        if args.len() != 2 {
+            eprintln!("Usage: think_time <seconds>");
+            return;
+        }
+        match args[1].parse::<f64>() {
+            Ok(seconds) => {
+                state.time_per_move = std::time::Duration::from_secs_f64(seconds);
+                if !state.args.no_output {
+                    println!("Set AI think time to {} seconds", seconds);
+                }
+            }
+            Err(_) => eprintln!("Invalid number format for seconds"),
         }
     }
 }
@@ -195,7 +224,7 @@ impl Command for GenerateCommand {
 
     fn execute(&self, state: &mut AppState, _args: &[String]) {
         if let Some(ai) = &mut state.ai {
-            match ai.best_move(&state.board) {
+            match ai.best_move(&state.board, state.time_per_move) {
                 Some((mv, score)) => {
                     if state.args.no_output {
                         println!("{},{}", mv.uci(), score);

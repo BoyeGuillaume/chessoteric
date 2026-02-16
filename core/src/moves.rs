@@ -22,11 +22,143 @@ pub struct Move {
 }
 
 impl Move {
+    fn display_castle(&self) -> Option<&'static str> {
+        if self.flags.contains(MoveFlags::CASTLE) {
+            match self.to {
+                6 | 62 => Some("O-O"),
+                2 | 58 => Some("O-O-O"),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn algebraic_notation<'a>(
+        &'a self,
+        board: &'a Board,
+        other: &'a Vec<Move>,
+    ) -> impl std::fmt::Display + 'a {
+        struct SimplifiedUciMove<'a> {
+            r#move: &'a Move,
+            board: &'a Board,
+            other_moves: &'a Vec<Move>,
+        }
+
+        impl std::fmt::Display for SimplifiedUciMove<'_> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                if let Some(castle_str) = self.r#move.display_castle() {
+                    return write!(f, "{}", castle_str);
+                }
+
+                // Is this a capture move
+                let is_capture_move = self.board.occupied.get(self.r#move.to)
+                    || (self.r#move.flags.contains(MoveFlags::EN_PASSANT));
+
+                // Do we need to include the piece symbol in the move notation,
+                let needs_piece_symbol = self.r#move.piece != Piece::Pawn;
+
+                // Do we need to disambiguate the file
+                let needs_source_disambiguation = self.other_moves.iter().any(|m| {
+                    m.to == self.r#move.to
+                        && m.piece == self.r#move.piece
+                        && m.from != self.r#move.from
+                });
+
+                let file_disambiguation_sufficient = self.other_moves.iter().all(|m| {
+                    m.to != self.r#move.to
+                        || m.piece != self.r#move.piece
+                        || m.from == self.r#move.from
+                        || (m.from % 8) as u8 != (self.r#move.from % 8) as u8
+                });
+
+                let needs_file_disambiguation = (needs_source_disambiguation
+                    && file_disambiguation_sufficient)
+                    || (is_capture_move && self.r#move.piece == Piece::Pawn);
+
+                let needs_rank_disambiguation =
+                    needs_source_disambiguation && !file_disambiguation_sufficient;
+
+                // Determine if this is a check or checkmate move, to include the + or # symbol in the move notation
+                let mut board_after_move = self.board.clone();
+                self.r#move.apply(&mut board_after_move);
+                let mut mvs = Vec::new();
+                let mut currently_in_check = false;
+                generate_moves(&board_after_move, &mut mvs, &mut currently_in_check);
+                let is_checkmate = mvs.is_empty() && currently_in_check;
+
+                // Finally, construct the move string
+                let piece_str = if needs_piece_symbol {
+                    self.r#move.piece.symbol().to_ascii_uppercase()
+                } else {
+                    String::new()
+                };
+
+                // If this is a capture move, we need to include the 'x' symbol in the move notation
+                let capture_str = if is_capture_move { "x" } else { "" };
+
+                // If we need to disambiguate the file, we include the file of the origin square in the move notation
+                let file_disambiguation_str = if needs_file_disambiguation {
+                    let file = (self.r#move.from % 8) as u8;
+                    ((b'a' + file) as char).to_string()
+                } else {
+                    String::new()
+                };
+
+                let rank_disambiguation_str = if needs_rank_disambiguation {
+                    let rank = (self.r#move.from / 8) as u8;
+                    ((b'1' + rank) as char).to_string()
+                } else {
+                    String::new()
+                };
+
+                // If this is a promotion move, we need to include the symbol of the promotion piece in the move notation
+                let promotion_str = if let Some(promotion_piece) = self.r#move.promotion {
+                    format!("={}", promotion_piece.symbol().to_ascii_uppercase())
+                } else {
+                    String::new()
+                };
+
+                // If this is a check move, we need to include the '+' symbol in the move
+                let check_str = if is_checkmate {
+                    "#"
+                } else if currently_in_check {
+                    "+"
+                } else {
+                    ""
+                };
+
+                // Finally, we construct the move string
+                write!(
+                    f,
+                    "{}{}{}{}{}{}{}",
+                    piece_str,
+                    file_disambiguation_str,
+                    rank_disambiguation_str,
+                    capture_str,
+                    square_to_algebraic(self.r#move.to),
+                    promotion_str,
+                    check_str
+                )
+            }
+        }
+
+        SimplifiedUciMove {
+            r#move: self,
+            board,
+            other_moves: other,
+        }
+    }
+
     pub fn uci(&self) -> impl std::fmt::Display + '_ {
         struct UciMove<'a>(&'a Move);
 
         impl std::fmt::Display for UciMove<'_> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                if let Some(castle_str) = self.0.display_castle() {
+                    return write!(f, "{}", castle_str);
+                }
+
                 let promotion_str = if let Some(promotion_piece) = self.0.promotion {
                     format!("{}", promotion_piece.with_color(Color::Black).symbol())
                 } else {
@@ -639,7 +771,8 @@ pub fn generate_moves(board: &Board, moves: &mut Vec<Move>, currently_in_check: 
                     });
                 }
                 if board.flags.contains(BoardFlags::WHITE_QUEEN_SIDE_CASTLE)
-                    && (threat_or_non_empty.0 & 0x0e) == 0
+                    && (threat_or_non_empty.0 & 0x0c) == 0
+                    && (board.occupied.0 & 0x0e) == 0
                 {
                     moves.push(Move {
                         from: king_square as u8,
@@ -663,7 +796,8 @@ pub fn generate_moves(board: &Board, moves: &mut Vec<Move>, currently_in_check: 
                     });
                 }
                 if board.flags.contains(BoardFlags::BLACK_QUEEN_SIDE_CASTLE)
-                    && (threat_or_non_empty.0 & 0x0e00000000000000) == 0
+                    && (threat_or_non_empty.0 & 0x0c00000000000000) == 0
+                    && (board.occupied.0 & 0x0e00000000000000) == 0
                 {
                     moves.push(Move {
                         from: king_square as u8,
@@ -688,15 +822,24 @@ pub fn generate_moves(board: &Board, moves: &mut Vec<Move>, currently_in_check: 
             let to_square_8x8 = (m.to % 8, m.to / 8);
 
             // Only valid if the king_position_8x8, from_square_8x8 and to_square_8x8 are all aligned
-            let from_dir = (
+            let from_dir_unit = (
                 (from_square_8x8.0 as i8 - king_position_8x8.0 as i8).signum(),
                 (from_square_8x8.1 as i8 - king_position_8x8.1 as i8).signum(),
             );
+
             let to_dir = (
-                (to_square_8x8.0 as i8 - king_position_8x8.0 as i8).signum(),
-                (to_square_8x8.1 as i8 - king_position_8x8.1 as i8).signum(),
+                (to_square_8x8.0 as i8 - king_position_8x8.0 as i8),
+                (to_square_8x8.1 as i8 - king_position_8x8.1 as i8),
             );
-            if from_dir != to_dir {
+
+            let a = to_dir.0 * from_dir_unit.0; // >= 0, if 0 should ensure that to_dir.0 == 0 as well
+            let b = to_dir.1 * from_dir_unit.1; // >= 0, if 0 should ensure that to_dir.1 == 0 as well
+
+            if a == 0 {
+                return (to_dir.0 == 0) && (from_dir_unit.0 == 0);
+            } else if b == 0 {
+                return (to_dir.1 == 0) && (from_dir_unit.1 == 0);
+            } else if a != b {
                 return false;
             }
         }
