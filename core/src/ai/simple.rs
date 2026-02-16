@@ -1,11 +1,13 @@
 use std::usize;
 
 use bitflags::bitflags;
+use strum::{EnumIs, EnumTryAs};
 
 use crate::{
     ai::Ai,
     board::{Board, Color, Piece},
     moves::{Move, generate_moves},
+    tree::{Tree, TreeNodeRef, TreeRef},
 };
 
 pub struct SimpleAi {}
@@ -27,7 +29,6 @@ fn simple_evaluation(board: &crate::board::Board) -> f32 {
         let count_black = count_total - count_white;
 
         let value = match piece {
-            Piece::King => 1000.0,
             Piece::Queen => 9.0,
             Piece::Rook => 5.0,
             Piece::Bishop => 3.0,
@@ -52,12 +53,10 @@ bitflags! {
 }
 
 struct TreeEntry {
-    first_child_id: Option<usize>, // The first child of this entry in the search tree
-    next_sibling: Option<usize>,   // The next sibling of this entry in the search tree
     r#move: Option<Move>, // The move leading to this entry from its parent (None for the root)
-    board: Board,         // The board state after applying the move sequence leading to this entry
+    depth: u16,           // The depth of this entry in the search tree
     score: f32,           // Current evaluation score at provided depth
-    depth: usize,         // The depth of this entry in the search tree
+    board: Board,         // The board state after applying the move sequence leading to this entry
     flags: TerminalFlags, // Flags to indicate if this entry is terminal and the type of terminal
 }
 
@@ -66,81 +65,77 @@ impl TreeEntry {
         (self.flags & TerminalFlags::ANY_TERMINAL) != TerminalFlags::empty()
     }
 
-    fn should_evaluate(&self, epoch: usize) -> bool {
+    fn should_evaluate(&self, epoch: u16) -> bool {
         // We should evaluate this entry if it's not terminal and we haven't evaluated it at this depth before
-        !self.is_terminal() && self.depth <= epoch
+        !self.is_terminal() && self.depth < epoch && self.depth < 3
     }
 }
 
+// fn display_tree(tree: TreeRef<'_, TreeEntry>, indent: usize, depth: usize) {
+//     if let Some(mv) = tree.r#move {
+//         println!("{}Move: {}, score: {}", "  ".repeat(indent), mv, tree.score);
+//     } else {
+//         println!("{}Root -- {}", "  ".repeat(indent), tree.board.fen());
+//     }
+
+//     if depth > 0 {
+//         let mut child_opt = tree.child();
+//         while let Some(child) = child_opt {
+//             display_tree(child, indent + 1, depth - 1);
+//             child_opt = child.next();
+//         }
+//     }
+// }
+
 impl Ai for SimpleAi {
     fn best_move(&mut self, board: &Board, timeout: std::time::Duration) -> Option<(Move, f32)> {
-        // Generate the initial board position
-        let mut tree = vec![TreeEntry {
-            first_child_id: None,
-            next_sibling: None,
-            r#move: None, // No move for the root
-            board: board.clone(),
-            score: simple_evaluation(board),
+        let mut tree = Tree::new(TreeEntry {
+            r#move: None,
             depth: 0,
+            score: simple_evaluation(board),
+            board: board.clone(),
             flags: TerminalFlags::empty(),
-        }];
+        });
 
-        struct StackEntry {
-            tree_id: usize,  // The ID of the corresponding entry in the search tree
-            best_score: f32, // Best score among the siblings of this entry, used for backtracking
+        // Stack for our iterative deepening search, which will contain references to tree nodes
+        // alongside the phase
+        #[derive(EnumIs, EnumTryAs)]
+        enum StackEntry {
+            Evaluating(TreeNodeRef),        // Evaluation phase for this node
+            Backtracking(TreeNodeRef, f32), // Backtracking phase for this node
         }
-        let mut stack: Vec<StackEntry> = vec![];
+        let mut stack = Vec::new();
+        let mut moves = Vec::new();
 
-        // Start of the main exploration loop
-        let loop_start = std::time::Instant::now();
-        let mut epoch = 0; // max depth for the current iteration
+        let start_time = std::time::Instant::now();
+        let mut epoch = 0u16;
         loop {
-            // If timeout reached, break the loop
-            if loop_start.elapsed() >= timeout {
+            // While we have time, we will perform a depth-limited search, increasing the depth limit (epoch) with each iteration
+            if start_time.elapsed() >= timeout {
                 break;
             }
 
-            // Proceed as follow
-            // (1) If stack is empty, launch a new epoch by pushing the root entry to the stack
-            // (2) If stack is not empty, peek the top entry and
-            //    (2.a) If the entry need to be evaluated,
-            //          (2.a.i) If entry has children, recursively evaluate children (push first child to the stack)
-            //          (2.a.ii) If entry has no children and is terminal, mark it as terminal and backtrack
-            //          (2.a.iii) If entry has no children and is not terminal, generate its children and push the first child to the stack
-            //    (2.b) If the entry doesn't need to be evaluated, backtrack and update the parent entry with the best score found
-            //
-            // When backtracking,
-            // (1) If the `next_sibling` of the entry is not None, push the next sibling to the stack, pop current
-            // (2) If the `next_sibling` of the entry is None, pop current and backtrack parent
+            // Pop last element from the stack
+            match stack.pop() {
+                Some(StackEntry::Evaluating(noderef)) => {
+                    // Get the tree entry for this node reference, then three possiblity
+                    let mut entry = tree.get_mut(noderef);
+                    let next_to_move = entry.board.next_to_move();
 
-            if let Some(last_entry) = stack.last() {
-                // If the entry needs to be evaluated, we need to evaluate it
-                let mut requires_backtrack = None; // The best score for the parent entry
-                let tree_entry = &mut tree[last_entry.tree_id];
-                let current_color = tree_entry.board.next_to_move();
+                    if let Some(child_noderef) = entry.child_noderef() {
+                        // Only the first child is pushed as it is responsible for pushing the next child
+                        // during backtracking.
+                        stack.push(StackEntry::Backtracking(noderef, next_to_move.minmax_ini()));
+                        stack.push(StackEntry::Evaluating(child_noderef));
+                    } else if entry.should_evaluate(epoch) {
+                        // Generate moves for this position and add them to the tree as children of the current node
+                        let mut currently_in_check = false;
+                        generate_moves(&entry.board, &mut moves, &mut currently_in_check);
 
-                if tree_entry.should_evaluate(epoch) {
-                    // We need to evaluate this entry, check if children exist
-                    if let Some(first_child_id) = tree_entry.first_child_id {
-                        // We have children, we need to evaluate them
-                        stack.push(StackEntry {
-                            tree_id: first_child_id,
-                            best_score: current_color.opposite().minmax_ini(), // Start with -inf for the child, we want to maximize for the child
-                        });
-                    } else if tree_entry.is_terminal() {
-                        // This entry is terminal, we can backtrack
-                        let score = current_color.minmax(last_entry.best_score, tree_entry.score);
-                        requires_backtrack = Some(score);
-                    } else {
-                        // No children, we need to evaluate this entry
-                        let mut is_in_check = false;
-                        let mut moves = vec![];
-                        generate_moves(&tree_entry.board, &mut moves, &mut is_in_check);
-
+                        // Handle terminal positions (checkmate or stalemate)
                         if moves.is_empty() {
-                            // Set this entry as checkmate, we can backtrack
-                            tree_entry.flags |= if is_in_check {
-                                if current_color == Color::White {
+                            entry.flags |= if currently_in_check {
+                                if next_to_move == Color::White {
                                     TerminalFlags::CHECKMATE_BLACK_WIN
                                 } else {
                                     TerminalFlags::CHECKMATE_WHITE_WIN
@@ -148,120 +143,85 @@ impl Ai for SimpleAi {
                             } else {
                                 TerminalFlags::STALEMATE
                             };
-
-                            // Sets the score of this entry according to the result
-                            tree_entry.score = if is_in_check {
-                                current_color.minmax_ini()
+                            entry.score = if currently_in_check {
+                                // If next to move is white then black has won, therefore
+                                // negative infinity
+                                next_to_move.minmax_ini()
                             } else {
-                                0.0 // Stalemate
+                                0.0
                             };
-                            requires_backtrack = Some(tree_entry.score);
+
+                            // Push backtracking on the current node
+                            stack.push(StackEntry::Backtracking(noderef, entry.score));
                         } else {
-                            // This entry is not terminal, we need to add its children to the tree
-                            let mut previous_child_id = None;
-                            let mut best_score = current_color.minmax_ini();
-
-                            let board = tree_entry.board.clone();
-                            let current_depth = tree_entry.depth;
-
-                            // let mut last_child_id = None;
-                            for mv in moves {
-                                let mut new_board = board.clone();
+                            // let board = entry.board.clone();
+                            // Add as many children as we have moves, and push them to the stack for evaluation
+                            for mv in moves.drain(..) {
+                                let mut new_board = entry.board.clone();
                                 mv.apply(&mut new_board);
-                                let new_score = simple_evaluation(&new_board);
-                                let new_entry_id = tree.len();
-                                best_score = current_color.minmax(best_score, new_score);
 
-                                tree.push(TreeEntry {
-                                    first_child_id: None,
-                                    next_sibling: previous_child_id,
-                                    board: new_board,
-                                    score: new_score,
+                                entry.push_child(TreeEntry {
                                     r#move: Some(mv),
-                                    depth: current_depth + 1,
+                                    depth: entry.depth + 1,
+                                    score: simple_evaluation(&new_board),
+                                    board: new_board,
                                     flags: TerminalFlags::empty(),
                                 });
-                                previous_child_id = Some(new_entry_id);
                             }
 
-                            // Update the first_child_id of this node
-                            debug_assert!(
-                                previous_child_id.is_some(),
-                                "We should have at least one child since moves is not empty"
-                            );
-                            let tree_entry = &mut tree[last_entry.tree_id];
-                            tree_entry.first_child_id = previous_child_id;
-                            tree_entry.score = best_score;
-
-                            // Add children to the stack
-                            stack.push(StackEntry {
-                                tree_id: previous_child_id.unwrap(),
-                                best_score: current_color.opposite().minmax_ini(), // Start with -inf for the child, we want to maximize for the child
-                            });
+                            // Push the first child for evaluation, the rest will be pushed when we backtrack
+                            let first_child_noderef = tree.get(noderef).child().unwrap().noderef();
+                            stack
+                                .push(StackEntry::Backtracking(noderef, next_to_move.minmax_ini()));
+                            stack.push(StackEntry::Evaluating(first_child_noderef));
                         }
-                    }
-                } else {
-                    // We don't need to evaluate this entry, we can backtrack
-                    let tree_entry = &mut tree[last_entry.tree_id];
-                    requires_backtrack = Some(tree_entry.score);
-                }
-
-                // If requires backtracking, we either
-                // (1) pop then push the next sibling to the stack if it exists
-                // (2) pop and backtrack to the parent if no sibling
-                while let Some(score) = requires_backtrack {
-                    let last_entry = stack.pop().unwrap();
-
-                    let tree_entry = &tree[last_entry.tree_id];
-                    let current_color = tree_entry.board.next_to_move();
-
-                    if let Some(sibling) = tree_entry.next_sibling {
-                        // We have a sibling, we need to evaluate it
-                        stack.push(StackEntry {
-                            tree_id: sibling,
-                            best_score: score,
-                        });
-                        requires_backtrack = None; // No need to backtrack further since we have a sibling to evaluate
                     } else {
-                        // No sibling, we need to backtrack to the parent (if exists)
-                        stack.pop();
-                        if let Some(parent_entry) = stack.last_mut() {
-                            parent_entry.best_score = current_color
-                                .opposite()
-                                .minmax(parent_entry.best_score, score);
-                            requires_backtrack = Some(score);
-                        } else {
-                            requires_backtrack = None; // No parent, we are back at the root, we can stop backtracking
-                        }
+                        stack.push(StackEntry::Backtracking(noderef, entry.score));
                     }
                 }
-            } else {
-                // Start a new epoch
-                epoch += 1;
-                stack.push(StackEntry {
-                    tree_id: 0,
-                    best_score: board.next_to_move().minmax_ini(), // Start with -inf for the root, we want to maximize for the root
-                });
+                Some(StackEntry::Backtracking(noderef, current_score)) => {
+                    let mut entry = tree.get_mut(noderef);
+                    let next_sibling_noderef = entry.next_noderef();
+                    entry.score = current_score;
+
+                    // Update the parent score based on the current score and the color to move at
+                    // parent node (if needed)
+                    if let Some(parent_stack_entry) = stack.last_mut() {
+                        let (parent_noderef, parent_score) =
+                            parent_stack_entry.try_as_backtracking_mut().unwrap();
+
+                        let parent_color = tree.get(*parent_noderef).board.next_to_move();
+                        *parent_score = parent_color.minmax(*parent_score, current_score);
+                    }
+
+                    // If some sibling nodes haven't been evaluated yet, we need to push them
+                    // to the stack for evaluation before we can backtrack
+                    if let Some(sibling_noderef) = next_sibling_noderef {
+                        stack.push(StackEntry::Evaluating(sibling_noderef));
+                    }
+                }
+                None => {
+                    // If the stack is empty, we need to start a new search from the root
+                    epoch += 1;
+                    stack.push(StackEntry::Evaluating(TreeNodeRef::ROOT));
+                }
             }
         }
 
-        // After the exploration loop, the best move is the child of the root with the best score
-        let root_entry = &tree[0];
+        // After we have exhausted our time, the best move will be the child of the root with the best score
+        let root_entry = tree.get(TreeNodeRef::ROOT);
+        let color = root_entry.board.next_to_move();
         let mut best_move = None;
-        let mut best_score = board.next_to_move().minmax_ini();
-        let mut child_id = root_entry.first_child_id;
-        while let Some(id) = child_id {
-            let child_entry = &tree[id];
-            if board
-                .next_to_move()
-                .minmax_cmp(child_entry.score, best_score)
-            {
-                best_score = child_entry.score;
-                best_move = Some((child_entry.r#move.unwrap(), child_entry.score));
+        let mut best_score = color.minmax_ini();
+        let mut child_noderef_opt = root_entry.child();
+        while let Some(child) = child_noderef_opt {
+            if color.minmax_cmp(child.score, best_score) {
+                best_score = child.score;
+                best_move = child.r#move;
             }
-            child_id = child_entry.next_sibling;
+            child_noderef_opt = child.next();
         }
 
-        best_move
+        best_move.map(|mv| (mv, best_score))
     }
 }

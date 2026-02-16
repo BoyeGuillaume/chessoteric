@@ -427,6 +427,8 @@ fn generate_pawn_attacks(origin: Bitboard, color: Color) -> Bitboard {
 }
 
 pub fn generate_moves(board: &Board, moves: &mut Vec<Move>, currently_in_check: &mut bool) {
+    moves.clear();
+
     let rook_like = *board.get(Piece::Rook) | *board.get(Piece::Queen);
     let bishop_like = *board.get(Piece::Bishop) | *board.get(Piece::Queen);
     let knight_like = *board.get(Piece::Knight);

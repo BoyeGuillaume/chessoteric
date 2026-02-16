@@ -5,3 +5,4 @@ pub mod magic;
 pub mod moves;
 #[cfg(feature = "study")]
 pub mod study;
+pub mod tree;

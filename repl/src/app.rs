@@ -46,7 +46,7 @@ impl Default for AppState {
 }
 
 pub fn app(terminal: &mut DefaultTerminal) -> std::io::Result<String> {
-    // let mut ai = chessoteric_core::ai::get_ai("simple").unwrap();
+    let mut ai = chessoteric_core::ai::get_ai("simple").unwrap();
     let mut state = AppState::default();
 
     if args().len() > 1 {
@@ -120,13 +120,13 @@ pub fn app(terminal: &mut DefaultTerminal) -> std::io::Result<String> {
                                         mv.apply(&mut board);
 
                                         // Get the best move from the AI and apply it to the board
-                                        // if let Some((ai_move, ai_score)) =
-                                        //     ai.best_move(&board, std::time::Duration::from_secs(1))
-                                        // {
-                                        //     state.moves.push(ai_move.to_string());
-                                        //     ai_move.apply(&mut board);
-                                        //     state.current_score = ai_score;
-                                        // }
+                                        if let Some((ai_move, ai_score)) =
+                                            ai.best_move(&board, std::time::Duration::from_secs(1))
+                                        {
+                                            state.moves.push(ai_move.to_string());
+                                            ai_move.apply(&mut board);
+                                            state.current_score = ai_score;
+                                        }
 
                                         // Finally, get the best move from the AI and apply it to the board
                                         let new_board =

@@ -14,7 +14,8 @@ colorama_init()
 
 load_dotenv()
 API_TOKEN = os.getenv("LICHESS_API_KEY")
-ENGINE_PATH = join(dirname(dirname(abspath(__file__))), "target", "release", "sterm")
+WORKSPACE_PATH = dirname(dirname(abspath(__file__)))
+ENGINE_PATH = join(WORKSPACE_PATH, "target", "release", "sterm")
 
 print(f"{Fore.LIGHTGREEN_EX}[+] Starting Lichess Bot...{Style.RESET_ALL}")
 session = berserk.TokenSession(API_TOKEN)
@@ -121,9 +122,13 @@ def should_accept(challenge):
     challenger = challenge['challenger']
     challenger_id = challenger['id']
     challender_rating = challenger['rating']
-    accepting = challenger_id == "magelan74"
+    accepting = challenger_id in ["magelan74", "michelducartier"]
     print(f"{Fore.YELLOW}[!] Received challenge from {challenger_id} (rating: {challender_rating}) ({'accepted' if accepting else 'declined'}){Style.RESET_ALL}")
     return accepting
+
+# Always compile before running it
+print(f"{Fore.BLUE}[ ] Compiling `sterm` binary to the latest version{Style.RESET_ALL}")
+subprocess.run(["cargo", "build", "--bin", "sterm", "--release"], cwd=WORKSPACE_PATH).check_returncode()
 
 print(f"{Fore.GREEN}[+] Bot is running...{Style.RESET_ALL}")
 for event in client.bots.stream_incoming_events():
