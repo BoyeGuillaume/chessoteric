@@ -434,11 +434,14 @@ impl Ai for SimpleAi {
         self.stop_signal
             .store(false, std::sync::atomic::Ordering::SeqCst);
         let stop_signal = self.stop_signal.clone();
-        let thread_handle = std::thread::spawn(move || {
-            let mut ctx = ctx;
-            ctx.run(limits, print, stop_signal.clone());
-            ctx
-        });
+        let thread_handle = std::thread::Builder::new()
+            .name("SimpleAiThread".to_string())
+            .spawn(move || {
+                let mut ctx = ctx;
+                ctx.run(limits, print, stop_signal.clone());
+                ctx
+            })
+            .expect("Failed to spawn AI thread");
 
         // Store the thread handle and context in the main struct
         self.thread.borrow_mut().replace(thread_handle);
