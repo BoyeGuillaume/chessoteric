@@ -266,16 +266,31 @@ impl Command for GoCommand {
     }
 
     fn execute(&self, state: &mut AppState, args: &[String]) {
+        const USAGE: &str = "Usage: go [movetime <milliseconds>] [depth <ply>] [wtime <milliseconds>] [btime <milliseconds>] [winc <milliseconds>] [binc <milliseconds>]";
+
         // let mut search_time = state.time_per_move;
         let mut movetime = None;
         let mut depth = None;
+        let mut wtime = None;
+        let mut btime = None;
+        let mut winc = None;
+        let mut binc = None;
+
         {
             let mut i = 1;
             while i < args.len() {
                 match args[i].as_str() {
+                    "infinite" => {
+                        movetime.take();
+                        depth.take();
+                        wtime.take();
+                        btime.take();
+                        winc.take();
+                        binc.take();
+                    }
                     "movetime" => {
                         if i + 1 >= args.len() {
-                            eprintln!("Usage: go [movetime <milliseconds>] [depth <ply>]");
+                            eprintln!("{}", USAGE);
                             return;
                         }
                         let time_ms = match args[i + 1].parse::<u64>() {
@@ -289,7 +304,7 @@ impl Command for GoCommand {
                     }
                     "depth" => {
                         if i + 1 >= args.len() {
-                            eprintln!("Usage: go [movetime <milliseconds>] [depth <ply>]");
+                            eprintln!("{}", USAGE);
                             return;
                         }
                         let depth_value = match args[i + 1].parse::<u16>() {
@@ -301,15 +316,59 @@ impl Command for GoCommand {
                         };
                         depth.replace(depth_value);
                     }
+                    "wtime" | "btime" | "winc" | "binc" => {
+                        if i + 1 >= args.len() {
+                            eprintln!("{}", USAGE);
+                            return;
+                        }
+                        let time_ms = match args[i + 1].parse::<u64>() {
+                            Ok(time_ms) => time_ms,
+                            Err(_) => {
+                                eprintln!("Invalid wtime value: {}", args[i + 1]);
+                                return;
+                            }
+                        };
+                        let duration = std::time::Duration::from_millis(time_ms);
+                        match args[i].as_str() {
+                            "wtime" => wtime.replace(duration),
+                            "btime" => btime.replace(duration),
+                            "winc" => winc.replace(duration),
+                            "binc" => binc.replace(duration),
+                            _ => unreachable!(),
+                        };
+                    }
                     _ => {
                         eprintln!("Unknown argument: {}", args[i]);
-                        eprintln!("Usage: go [movetime <milliseconds>] [depth <ply>]");
+                        eprintln!("{}", USAGE);
                         eprintln!("Got command: {}", args.join(" "));
                     }
                 }
 
                 i += 2;
             }
+        }
+
+        if movetime.is_none()
+            && depth.is_none()
+            && (wtime.is_some() || btime.is_some() || winc.is_some() || binc.is_some())
+        {
+            let winc = winc.unwrap_or_else(|| std::time::Duration::from_millis(0));
+            let binc = binc.unwrap_or_else(|| std::time::Duration::from_millis(0));
+            let wtime = wtime.unwrap_or_else(|| std::time::Duration::from_millis(0));
+            let btime = btime.unwrap_or_else(|| std::time::Duration::from_millis(0));
+
+            let next_to_move = state.board.next_to_move();
+            let time_for_move = match next_to_move {
+                chessoteric_core::board::Color::White => {
+                    wtime.checked_div(30).unwrap_or_default() + winc
+                }
+                chessoteric_core::board::Color::Black => {
+                    btime.checked_div(30).unwrap_or_default() + binc
+                }
+            };
+
+            // We consider that we will need 30 move in the future
+            movetime.replace(time_for_move);
         }
 
         let limit = AiLimit { movetime, depth };
@@ -420,6 +479,7 @@ impl Command for UciCommand {
         };
         println!("id name {}", ai.name());
         println!("id author {}", ai.authors().join(", "));
+        println!("");
         println!("uciok");
     }
 }

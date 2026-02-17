@@ -11,6 +11,8 @@ from colorama import init as colorama_init
 from colorama import Fore
 from colorama import Style
 import logging
+import subprocess
+import shutil
 
 # logging.basicConfig(level=logging.DEBUG)
 
@@ -93,10 +95,16 @@ def run_tournament(engine1, engine2, time_limit=0.05, limit_game=None):
         tqdm.tqdm.write(f"{Fore.LIGHTGREEN_EX}    Finished opening: {name} with result {result}{Style.RESET_ALL}")
 
 
-import subprocess
+DEBUG = False
+
+build_args = []
+if not DEBUG:
+    build_args += ["--release"]
+    
+# Build the engine and get the path to the executable
 WORKSPACE_PATH = dirname(dirname(abspath(__file__)))
-ENGINE_PATH = [join(WORKSPACE_PATH, "target", "release", "sterm"), "--ai", "simple"]
-subprocess.run(["cargo", "build", "--release", "--bin", "sterm"], cwd=WORKSPACE_PATH).check_returncode()
+ENGINE_PATH = [join(WORKSPACE_PATH, "target", "debug" if DEBUG else "release", "sterm"), "--ai", "simple"]
+subprocess.run(["cargo", "build", "--bin", "sterm", *build_args], cwd=WORKSPACE_PATH).check_returncode()
 
 # engine = chess.engine.SimpleEngine.popen_uci("/usr/bin/stockfish")
 engine2 = chess.engine.SimpleEngine.popen_uci(ENGINE_PATH)

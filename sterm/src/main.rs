@@ -45,6 +45,8 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    } else {
+        state.ai = Some(chessoteric_core::ai::get_ai("simple").expect("Failed to load default AI"));
     }
 
     'mainloop: loop {
