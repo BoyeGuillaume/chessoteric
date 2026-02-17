@@ -44,3 +44,4 @@ Cargo.lock
 # Ignore tournament results and logs
 tournament_results.log
 /config.json
+UHO_Lichess_4852_v1.epd
