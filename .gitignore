@@ -40,3 +40,7 @@ Cargo.lock
 
 # Ignore the .env file which contains sensitive information such as API keys
 .env
+
+# Ignore tournament results and logs
+tournament_results.log
+/config.json

@@ -218,6 +218,29 @@ impl Color {
             Color::Black => a < b,
         }
     }
+
+    /// Updates alpha and beta based on the given score and returns true if the current branch should be pruned.
+    ///
+    /// Alpha-beta pruning is a search algorithm that reduces the number of nodes evaluated in the search tree by
+    /// keeping track of the best scores for both players (alpha for the maximizing player and beta for the
+    /// minimizing player) and pruning branches that cannot possibly influence the final decision.
+    ///
+    pub fn alpha_beta_prune(&self, score: f32, alpha: &mut f32, beta: &mut f32) -> bool {
+        match self {
+            Color::White => {
+                if score > *alpha {
+                    *alpha = score;
+                }
+                *alpha >= *beta
+            }
+            Color::Black => {
+                if score < *beta {
+                    *beta = score;
+                }
+                *beta <= *alpha
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, EnumIter, FromRepr)]

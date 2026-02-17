@@ -111,20 +111,25 @@ impl SimpleAiCtx {
     }
 
     fn run(&mut self, limits: AiLimit, print: bool, stop_signal: Arc<AtomicBool>) {
-        // let mut tree = Tree::new(TreeEntry {
-        //     r#move: None,
-        //     depth: 0,
-        //     score: simple_evaluation(&self.board),
-        //     board: self.board.clone(),
-        //     flags: TerminalFlags::empty(),
-        // });
-
         // Stack for our iterative deepening search, which will contain references to tree nodes
         // alongside the phase
+        struct Evaluating {
+            noderef: TreeNodeRef,
+            alpha: f32,
+            beta: f32,
+        }
+
+        struct Backtracking {
+            noderef: TreeNodeRef,
+            current_score: f32, // The score amongst the siblings that we have evaluated so far
+            alpha: f32,
+            beta: f32,
+        }
+
         #[derive(EnumIs, EnumTryAs)]
         enum StackEntry {
-            Evaluating(TreeNodeRef),        // Evaluation phase for this node
-            Backtracking(TreeNodeRef, f32), // Backtracking phase for this node
+            Evaluating(Evaluating),
+            Backtracking(Backtracking),
         }
         let mut stack = Vec::new();
         let mut moves = Vec::new();
@@ -152,16 +157,26 @@ impl SimpleAiCtx {
 
             // Pop last element from the stack
             match stack.pop() {
-                Some(StackEntry::Evaluating(noderef)) => {
+                Some(StackEntry::Evaluating(evaluating)) => {
                     // Get the tree entry for this node reference, then three possiblity
-                    let mut entry = self.tree.get_mut(noderef);
+                    let mut entry = self.tree.get_mut(evaluating.noderef);
                     let next_to_move = entry.board.next_to_move();
 
                     if let Some(child_noderef) = entry.child_noderef() {
                         // Only the first child is pushed as it is responsible for pushing the next child
                         // during backtracking.
-                        stack.push(StackEntry::Backtracking(noderef, next_to_move.minmax_ini()));
-                        stack.push(StackEntry::Evaluating(child_noderef));
+                        stack.push(StackEntry::Backtracking(Backtracking {
+                            noderef: evaluating.noderef,
+                            current_score: next_to_move.minmax_ini(),
+                            alpha: evaluating.alpha,
+                            beta: evaluating.beta,
+                        }));
+
+                        stack.push(StackEntry::Evaluating(Evaluating {
+                            noderef: child_noderef,
+                            alpha: evaluating.alpha,
+                            beta: evaluating.beta,
+                        }));
                     } else if entry.should_evaluate(epoch) {
                         // Generate moves for this position and add them to the tree as children of the current node
                         let mut currently_in_check = false;
@@ -187,7 +202,12 @@ impl SimpleAiCtx {
                             };
 
                             // Push backtracking on the current node
-                            stack.push(StackEntry::Backtracking(noderef, entry.score));
+                            stack.push(StackEntry::Backtracking(Backtracking {
+                                noderef: evaluating.noderef,
+                                current_score: entry.score,
+                                alpha: evaluating.alpha,
+                                beta: evaluating.beta,
+                            }));
                         } else {
                             // let board = entry.board.clone();
                             // Add as many children as we have moves, and push them to the stack for evaluation
@@ -206,40 +226,111 @@ impl SimpleAiCtx {
 
                             // Push the first child for evaluation, the rest will be pushed when we backtrack
                             let first_child_noderef =
-                                self.tree.get(noderef).child().unwrap().noderef();
-                            stack
-                                .push(StackEntry::Backtracking(noderef, next_to_move.minmax_ini()));
-                            stack.push(StackEntry::Evaluating(first_child_noderef));
+                                self.tree.get(evaluating.noderef).child().unwrap().noderef();
+                            stack.push(StackEntry::Backtracking(Backtracking {
+                                noderef: evaluating.noderef,
+                                current_score: next_to_move.minmax_ini(),
+                                alpha: evaluating.alpha,
+                                beta: evaluating.beta,
+                            }));
+                            stack.push(StackEntry::Evaluating(Evaluating {
+                                noderef: first_child_noderef,
+                                alpha: evaluating.alpha,
+                                beta: evaluating.beta,
+                            }));
                         }
                     } else {
-                        stack.push(StackEntry::Backtracking(noderef, entry.score));
+                        stack.push(StackEntry::Backtracking(Backtracking {
+                            noderef: evaluating.noderef,
+                            current_score: entry.score,
+                            alpha: evaluating.alpha,
+                            beta: evaluating.beta,
+                        }));
                     }
                 }
-                Some(StackEntry::Backtracking(noderef, current_score)) => {
-                    let mut entry = self.tree.get_mut(noderef);
+                #[allow(unused_mut)]
+                Some(StackEntry::Backtracking(mut backtracking)) => {
+                    let mut entry = self.tree.get_mut(backtracking.noderef);
+                    #[cfg(feature = "alpha_beta_soft_pruning")]
+                    let mut prunned = false;
+                    #[cfg(feature = "alpha_beta_soft_pruning")]
+                    let current_color = entry.board.next_to_move();
                     let next_sibling_noderef = entry.next_noderef();
-                    entry.score = current_score;
+
+                    entry.score = backtracking.current_score;
+
+                    // Update the backtracking alpha/beta values based on the current score
+                    #[cfg(feature = "alpha_beta_soft_pruning")]
+                    match current_color.opposite() {
+                        Color::White => {
+                            if backtracking.current_score > backtracking.alpha {
+                                backtracking.alpha = backtracking.current_score;
+                            }
+
+                            // Soft pruning
+                            if backtracking.current_score >= backtracking.beta {
+                                prunned = true;
+                            }
+                        }
+                        Color::Black => {
+                            if backtracking.current_score < backtracking.beta {
+                                backtracking.beta = backtracking.current_score;
+                            }
+
+                            // Soft pruning
+                            if backtracking.current_score <= backtracking.alpha {
+                                prunned = true;
+                            }
+                        }
+                    }
 
                     // Update the parent score based on the current score and the color to move at
                     // parent node (if needed)
                     if let Some(parent_stack_entry) = stack.last_mut() {
-                        let (parent_noderef, parent_score) =
+                        let parent_backtracking =
                             parent_stack_entry.try_as_backtracking_mut().unwrap();
 
-                        let parent_color = self.tree.get(*parent_noderef).board.next_to_move();
-                        *parent_score = parent_color.minmax(*parent_score, current_score);
+                        let parent_color = self
+                            .tree
+                            .get(parent_backtracking.noderef)
+                            .board
+                            .next_to_move();
+
+                        parent_backtracking.current_score = parent_color.minmax(
+                            parent_backtracking.current_score,
+                            backtracking.current_score,
+                        );
                     }
 
                     // If some sibling nodes haven't been evaluated yet, we need to push them
                     // to the stack for evaluation before we can backtrack
-                    if let Some(sibling_noderef) = next_sibling_noderef {
-                        stack.push(StackEntry::Evaluating(sibling_noderef));
+                    if let Some(sibling_noderef) = next_sibling_noderef
+                        && {
+                            #[cfg(feature = "alpha_beta_soft_pruning")]
+                            {
+                                !prunned
+                            }
+                            #[cfg(not(feature = "alpha_beta_soft_pruning"))]
+                            {
+                                true
+                            }
+                        }
+                    {
+                        stack.push(StackEntry::Evaluating(Evaluating {
+                            noderef: sibling_noderef,
+                            alpha: backtracking.alpha,
+                            beta: backtracking.beta,
+                        }));
                     }
                 }
                 None => {
                     // If the stack is empty, we need to start a new search from the root
                     epoch += 1;
-                    stack.push(StackEntry::Evaluating(TreeNodeRef::ROOT));
+                    stack.push(StackEntry::Evaluating(Evaluating {
+                        noderef: TreeNodeRef::ROOT,
+                        alpha: f32::NEG_INFINITY,
+                        beta: f32::INFINITY,
+                    }));
 
                     // Print some debug info about the current search
                     if print && let Some(result) = self.derive_results() {
@@ -295,21 +386,22 @@ impl std::default::Default for SimpleAi {
     }
 }
 
-// fn display_tree(tree: TreeRef<'_, TreeEntry>, indent: usize, depth: usize) {
-//     if let Some(mv) = tree.r#move {
-//         println!("{}Move: {}, score: {}", "  ".repeat(indent), mv, tree.score);
-//     } else {
-//         println!("{}Root -- {}", "  ".repeat(indent), tree.board.fen());
-//     }
+#[allow(dead_code)]
+fn display_tree(tree: crate::tree::TreeRef<'_, TreeEntry>, indent: usize, depth: usize) {
+    if let Some(mv) = tree.r#move {
+        println!("{}Move: {}, score: {}", "  ".repeat(indent), mv, tree.score);
+    } else {
+        println!("{}Root -- {}", "  ".repeat(indent), tree.board.fen());
+    }
 
-//     if depth > 0 {
-//         let mut child_opt = tree.child();
-//         while let Some(child) = child_opt {
-//             display_tree(child, indent + 1, depth - 1);
-//             child_opt = child.next();
-//         }
-//     }
-// }
+    if depth > 0 {
+        let mut child_opt = tree.child();
+        while let Some(child) = child_opt {
+            display_tree(child, indent + 1, depth - 1);
+            child_opt = child.next();
+        }
+    }
+}
 
 impl Ai for SimpleAi {
     fn name(&self) -> &str {
@@ -361,6 +453,11 @@ impl Ai for SimpleAi {
         let ctx = self.thread.borrow_mut().take().unwrap().join().unwrap();
         self.ctx.borrow_mut().replace(ctx);
         let ctx = self.ctx.borrow();
+
+        // if let Some(ctx) = ctx.as_ref() {
+        //     // display_tree(ctx.tree.get(TreeNodeRef::ROOT), 0, 3);
+        // }
+
         ctx.as_ref().unwrap().derive_results()
     }
 
