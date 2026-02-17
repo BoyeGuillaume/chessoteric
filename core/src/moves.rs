@@ -155,9 +155,9 @@ impl Move {
 
         impl std::fmt::Display for UciMove<'_> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                if let Some(castle_str) = self.0.display_castle() {
-                    return write!(f, "{}", castle_str);
-                }
+                // if let Some(castle_str) = self.0.display_castle() {
+                //     return write!(f, "{}", castle_str);
+                // }
 
                 let promotion_str = if let Some(promotion_piece) = self.0.promotion {
                     format!("{}", promotion_piece.with_color(Color::Black).symbol())
@@ -290,21 +290,27 @@ impl Move {
         }
 
         // If the move is a rook move, we need to remove the castling right corresponding to the rook if it is on its original square
-        if self.piece == Piece::Rook {
-            match board.next_to_move() {
-                Color::White => {
-                    if self.from == 0 {
-                        board.flags.remove(BoardFlags::WHITE_QUEEN_SIDE_CASTLE);
-                    } else if self.from == 7 {
-                        board.flags.remove(BoardFlags::WHITE_KING_SIDE_CASTLE);
-                    }
+        match self.to {
+            0 => board.flags.remove(BoardFlags::WHITE_QUEEN_SIDE_CASTLE),
+            7 => board.flags.remove(BoardFlags::WHITE_KING_SIDE_CASTLE),
+            56 => board.flags.remove(BoardFlags::BLACK_QUEEN_SIDE_CASTLE),
+            63 => board.flags.remove(BoardFlags::BLACK_KING_SIDE_CASTLE),
+            _ => { /* No castling rights to remove */ }
+        }
+
+        match board.next_to_move() {
+            Color::White => {
+                if self.from == 0 {
+                    board.flags.remove(BoardFlags::WHITE_QUEEN_SIDE_CASTLE);
+                } else if self.from == 7 {
+                    board.flags.remove(BoardFlags::WHITE_KING_SIDE_CASTLE);
                 }
-                Color::Black => {
-                    if self.from == 56 {
-                        board.flags.remove(BoardFlags::BLACK_QUEEN_SIDE_CASTLE);
-                    } else if self.from == 63 {
-                        board.flags.remove(BoardFlags::BLACK_KING_SIDE_CASTLE);
-                    }
+            }
+            Color::Black => {
+                if self.from == 56 {
+                    board.flags.remove(BoardFlags::BLACK_QUEEN_SIDE_CASTLE);
+                } else if self.from == 63 {
+                    board.flags.remove(BoardFlags::BLACK_KING_SIDE_CASTLE);
                 }
             }
         }
@@ -623,13 +629,20 @@ pub fn generate_moves(board: &Board, moves: &mut Vec<Move>, currently_in_check: 
             Color::Black => pawn_capture_move <= 7,
         };
         let dir = match board.next_to_move() {
-            Color::White => [Direction::SouthEast, Direction::SouthWest],
-            Color::Black => [Direction::NorthEast, Direction::NorthWest],
+            Color::White => [
+                (Direction::SouthEast, !Bitboard::FILE_A),
+                (Direction::SouthWest, !Bitboard::FILE_H),
+            ],
+            Color::Black => [
+                (Direction::NorthEast, !Bitboard::FILE_A),
+                (Direction::NorthWest, !Bitboard::FILE_H),
+            ],
         };
 
-        for direction in dir.iter() {
+        for (direction, mask) in dir.iter() {
             let from_square = direction.shift(pawn_capture_move).unwrap();
-            if Bitboard(1 << from_square) & friendly_pawns != Bitboard::empty() {
+            if (Bitboard(1 << from_square) & Bitboard(*mask)) & friendly_pawns != Bitboard::empty()
+            {
                 if can_promote {
                     for promotion_piece in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight]
                     {

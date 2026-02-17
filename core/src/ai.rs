@@ -28,9 +28,12 @@ pub trait Ai {
     fn name(&self) -> &str;
     fn authors(&self) -> &[&str];
 
-    fn start(&self, board: &Board, limits: AiLimit) -> AiType;
+    fn start(&self, board: &Board, limits: AiLimit, print: bool) -> AiType;
     fn stop(&self) -> Option<AiResult>;
     fn reset(&self);
+    fn is_ready(&self) -> bool {
+        true
+    }
 }
 
 pub fn get_ai(name: &str) -> Option<Box<dyn Ai>> {

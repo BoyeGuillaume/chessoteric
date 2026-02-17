@@ -1,22 +1,12 @@
-use chessoteric_core::{
-    ai::{Ai, AiLimit, get_ai},
-    board::Board,
-};
+use chessoteric_core::ai::{Ai, AiLimit, get_ai};
 use clap::Parser;
 
 use crate::StermArgs;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AiState {
-    Idle,
-    Thinking,
-}
 
 pub struct AppState {
     pub args: StermArgs,
     pub board: chessoteric_core::board::Board,
     pub ai: Option<Box<dyn Ai>>,
-    pub ai_state: AiState,
 }
 
 pub trait Command {
@@ -60,43 +50,84 @@ impl Command for PositionCommand {
             return;
         }
 
-        // Remove all arguments after `moves`
-        let args: Vec<String> = args.iter().cloned().collect();
-        let moves_index = args.iter().position(|arg| arg == "moves");
-        let args = if let Some(index) = moves_index {
-            args[..index].to_vec()
-        } else {
-            args
-        };
+        // We will parse the arguments in two steps
+        let mut board = None;
 
-        // If fen provided, use it. Otherwise, use the starting position
-        let fen = if args[1] == "fen" {
-            if args.len() < 3 {
+        {
+            let mut index = 1;
+            while index < args.len() && args[index] != "moves" {
+                match args[index].as_str() {
+                    "fen" => {
+                        // Parse until "moves" or end of args
+                        let mut fen_parts = Vec::new();
+                        index += 1;
+                        while index < args.len() && args[index] != "moves" {
+                            fen_parts.push(args[index].clone());
+                            index += 1;
+                        }
+
+                        let fen = fen_parts.join(" ");
+                        match chessoteric_core::board::Board::from_fen(&fen) {
+                            Ok(parsed_board) => {
+                                assert!(board.is_none(), "Multiple position specifications found");
+                                board = Some(parsed_board);
+                            }
+                            Err(_) => {
+                                eprintln!("Invalid FEN string");
+                                return;
+                            }
+                        }
+                    }
+                    "moves" => {
+                        break;
+                    }
+                    "startpos" => {
+                        assert!(board.is_none(), "Multiple position specifications found");
+                        board = Some(chessoteric_core::board::Board::default_position());
+                        index += 1;
+                    }
+                    _ => {
+                        eprintln!(
+                            "Usage: position [fen <fen_string> | startpos] moves <move1> <move2>, unknown argument: {}",
+                            args[index]
+                        );
+                        return;
+                    }
+                }
+            }
+
+            if index < args.len() && args[index] == "moves" {
+                index += 1;
+                if board.is_none() {
+                    eprintln!("Position must be specified before moves");
+                    return;
+                }
+                let board = board.as_mut().unwrap();
+                for move_str in &args[index..] {
+                    match chessoteric_core::moves::Move::from_uci(move_str.as_str(), board) {
+                        Some(mv) => mv.apply(board),
+                        None => {
+                            eprintln!("Invalid move: {}", move_str);
+                            return;
+                        }
+                    }
+                }
+            } else if board.is_none() {
                 eprintln!(
-                    "Usage: position [fen <fen_string> | startpos] moves <move1> <move2> ..."
+                    "Required 'moves' keyword not found. Usage: position [fen <fen_string> | startpos] moves <move1> <move2> ..."
                 );
                 return;
             }
-            args[2..].join(" ")
-        } else if args[1] == "startpos" {
-            Board::DEFAULT_POSITION_FEN.to_string()
-        } else {
-            eprintln!("Usage: position [fen <fen_string> | startpos] moves <move1> <move2> ...");
-            return;
-        };
-
-        if fen == "startpos" {
-            state.board = chessoteric_core::board::Board::default_position();
-        } else {
-            match chessoteric_core::board::Board::from_fen(&fen) {
-                Ok(board) => state.board = board,
-                Err(_) => {
-                    eprintln!("Invalid FEN string");
-                    return;
-                }
-            }
         }
 
+        if board.is_none() {
+            eprintln!(
+                "No position specified. Usage: position [fen <fen_string> | startpos] moves <move1> <move2> ..."
+            );
+            return;
+        }
+
+        state.board = board.unwrap();
         if state.args.human {
             println!("Board reset to:\n{}", state.board);
         }
@@ -218,7 +249,8 @@ impl Command for ListMovesCommand {
         let mut currently_in_check = false;
         chessoteric_core::moves::generate_moves(&state.board, &mut moves, &mut currently_in_check);
         for mv in &moves {
-            println!("{}", mv.algebraic_notation(&state.board, &moves));
+            // println!("{}", mv.algebraic_notation(&state.board, &moves));
+            println!("{}", mv.uci());
         }
     }
 }
@@ -237,50 +269,53 @@ impl Command for GoCommand {
         // let mut search_time = state.time_per_move;
         let mut movetime = None;
         let mut depth = None;
-        for i in 1..args.len() {
-            match args[i].as_str() {
-                "movetime" => {
-                    if i + 1 >= args.len() {
-                        eprintln!("Usage: go [movetime <milliseconds>] [depth <ply>]");
-                        return;
-                    }
-                    let time_ms = match args[i + 1].parse::<u64>() {
-                        Ok(time_ms) => time_ms,
-                        Err(_) => {
-                            eprintln!("Invalid movetime value: {}", args[i + 1]);
+        {
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "movetime" => {
+                        if i + 1 >= args.len() {
+                            eprintln!("Usage: go [movetime <milliseconds>] [depth <ply>]");
                             return;
                         }
-                    };
-                    movetime.replace(std::time::Duration::from_millis(time_ms));
-                }
-                "depth" => {
-                    if i + 1 >= args.len() {
-                        eprintln!("Usage: go [movetime <milliseconds>] [depth <ply>]");
-                        return;
+                        let time_ms = match args[i + 1].parse::<u64>() {
+                            Ok(time_ms) => time_ms,
+                            Err(_) => {
+                                eprintln!("Invalid movetime value: {}", args[i + 1]);
+                                return;
+                            }
+                        };
+                        movetime.replace(std::time::Duration::from_millis(time_ms));
                     }
-                    let depth_value = match args[i + 1].parse::<u16>() {
-                        Ok(depth) => depth,
-                        Err(_) => {
-                            eprintln!("Invalid depth value: {}", args[i + 1]);
+                    "depth" => {
+                        if i + 1 >= args.len() {
+                            eprintln!("Usage: go [movetime <milliseconds>] [depth <ply>]");
                             return;
                         }
-                    };
-                    depth.replace(depth_value);
+                        let depth_value = match args[i + 1].parse::<u16>() {
+                            Ok(depth) => depth,
+                            Err(_) => {
+                                eprintln!("Invalid depth value: {}", args[i + 1]);
+                                return;
+                            }
+                        };
+                        depth.replace(depth_value);
+                    }
+                    _ => {
+                        eprintln!("Unknown argument: {}", args[i]);
+                        eprintln!("Usage: go [movetime <milliseconds>] [depth <ply>]");
+                        eprintln!("Got command: {}", args.join(" "));
+                    }
                 }
-                _ => {
-                    eprintln!("Unknown argument: {}", args[i]);
-                    eprintln!("Usage: go [movetime <milliseconds>] [depth <ply>]");
-                }
+
+                i += 2;
             }
         }
 
         let limit = AiLimit { movetime, depth };
-        if let Some(ai) = &mut state.ai
-            && state.ai_state == AiState::Idle
-        {
-            ai.start(&state.board, limit);
-            state.ai_state = AiState::Thinking;
-        } else if state.ai.is_none() {
+        if let Some(ai) = &mut state.ai {
+            ai.start(&state.board, limit, true);
+        } else {
             if !state.args.human {
                 std::process::exit(1);
             }
@@ -306,26 +341,26 @@ impl Command for StopCommand {
             return;
         }
 
-        if let Some(ai) = &mut state.ai
-            && state.ai_state == AiState::Thinking
-        {
-            match ai.stop() {
-                Some(result) => {
-                    if result.pv.len() > 1 {
-                        println!(
-                            "bestmove {} ponder {}",
-                            result.best_move.uci(),
-                            result.pv[1].uci()
-                        );
-                    } else {
-                        println!("bestmove {}", result.best_move.uci());
-                    }
-                    // println!("Best move: {}, score: {}", result.best_move, result.score);
-                    // result.pv.iter().for_each(|mv| println!("PV move: {}", mv));
-                }
-                None => eprintln!("AI was not thinking or failed to return a result"),
-            }
-            state.ai_state = AiState::Idle;
+        if let Some(ai) = &mut state.ai {
+            ai.stop();
+
+            // match ai.stop() {
+            //     Some(result) => {
+            //         if result.pv.len() > 1 {
+            //             println!(
+            //                 "bestmove {} ponder {}",
+            //                 result.best_move.uci(),
+            //                 result.pv[1].uci()
+            //             );
+            //         } else {
+            //             println!("bestmove {}", result.best_move.uci());
+            //         }
+            //         // println!("Best move: {}, score: {}", result.best_move, result.score);
+            //         // result.pv.iter().for_each(|mv| println!("PV move: {}", mv));
+            //     }
+            //     None => eprintln!("AI was not thinking or failed to return a result"),
+            // }
+            // state.ai_state = AiState::Idle;
         } else if state.ai.is_none() {
             if !state.args.human {
                 std::process::exit(1);

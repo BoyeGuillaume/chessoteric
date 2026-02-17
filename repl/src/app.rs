@@ -120,7 +120,7 @@ pub fn app(terminal: &mut DefaultTerminal) -> std::io::Result<String> {
                                         mv.apply(&mut board);
 
                                         // Get the best move from the AI and apply it to the board
-                                        if ai.start(&board, AiLimit::default())
+                                        if ai.start(&board, AiLimit::default(), false)
                                             == chessoteric_core::ai::AiType::Async
                                         {
                                             // Wait for 500 milliseconds before checking

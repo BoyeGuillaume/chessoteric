@@ -33,7 +33,7 @@ impl Ai for RandomAi {
         &["Guillaume Boyé"]
     }
 
-    fn start(&self, board: &Board, _limits: AiLimit) -> AiType {
+    fn start(&self, board: &Board, _limits: AiLimit, print: bool) -> AiType {
         // For a random AI, we don't need to do any setup before generating a move
         let mut moves = Vec::new();
         let mut currently_in_check = false;
@@ -44,6 +44,10 @@ impl Ai for RandomAi {
         } else {
             let random_index = self.rng.lock().unwrap().random_range(0..moves.len());
             *self.best_move.lock().unwrap() = Some(moves[random_index]);
+        }
+
+        if print && let Some(mv) = *self.best_move.lock().unwrap() {
+            println!("bestmove {}", mv.uci());
         }
 
         AiType::Sync

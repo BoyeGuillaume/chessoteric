@@ -30,7 +30,6 @@ fn main() {
     let mut state = state::AppState {
         board: chessoteric_core::board::Board::from_fen(&args.fen).expect("Invalid FEN string"),
         ai: None,
-        ai_state: state::AiState::Idle,
         args,
     };
     let commands = state::all_commands();

@@ -110,7 +110,7 @@ impl SimpleAiCtx {
         })
     }
 
-    fn run(&mut self, limits: AiLimit, stop_signal: Arc<AtomicBool>) {
+    fn run(&mut self, limits: AiLimit, print: bool, stop_signal: Arc<AtomicBool>) {
         // let mut tree = Tree::new(TreeEntry {
         //     r#move: None,
         //     depth: 0,
@@ -242,7 +242,7 @@ impl SimpleAiCtx {
                     stack.push(StackEntry::Evaluating(TreeNodeRef::ROOT));
 
                     // Print some debug info about the current search
-                    if let Some(result) = self.derive_results() {
+                    if print && let Some(result) = self.derive_results() {
                         println!(
                             "info depth {} score {} nodes {} time {} pv {}",
                             epoch,
@@ -258,6 +258,22 @@ impl SimpleAiCtx {
                         );
                     }
                 }
+            }
+        }
+
+        if print {
+            if let Some(result) = self.derive_results() {
+                if result.pv.len() < 2 {
+                    println!("bestmove {}", result.best_move.uci(),);
+                } else {
+                    println!(
+                        "bestmove {} ponder {}",
+                        result.best_move.uci(),
+                        result.pv[1].uci()
+                    );
+                }
+            } else {
+                println!("bestmove (none)");
             }
         }
     }
@@ -297,14 +313,14 @@ impl std::default::Default for SimpleAi {
 
 impl Ai for SimpleAi {
     fn name(&self) -> &str {
-        "Random_AI"
+        "chessoteric"
     }
 
     fn authors(&self) -> &[&str] {
         &["Guillaume Boyé"]
     }
 
-    fn start(&self, board: &Board, limits: AiLimit) -> AiType {
+    fn start(&self, board: &Board, limits: AiLimit, print: bool) -> AiType {
         if self.thread.borrow().is_some() {
             self.stop_signal
                 .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -328,7 +344,7 @@ impl Ai for SimpleAi {
         let stop_signal = self.stop_signal.clone();
         let thread_handle = std::thread::spawn(move || {
             let mut ctx = ctx;
-            ctx.run(limits, stop_signal.clone());
+            ctx.run(limits, print, stop_signal.clone());
             ctx
         });
 
@@ -346,6 +362,15 @@ impl Ai for SimpleAi {
         self.ctx.borrow_mut().replace(ctx);
         let ctx = self.ctx.borrow();
         ctx.as_ref().unwrap().derive_results()
+    }
+
+    fn is_ready(&self) -> bool {
+        // The AI is ready if the thread is not running (i.e. we have a context available)
+        if let Some(thread) = self.thread.borrow().as_ref() {
+            !thread.is_finished()
+        } else {
+            true
+        }
     }
 
     fn reset(&self) {
