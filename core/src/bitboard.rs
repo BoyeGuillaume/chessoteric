@@ -1,3 +1,5 @@
+use rand::rand_core::block;
+
 use crate::board::Color;
 
 /// Bitboard representation of a chess position. Each bit represents a square on the chessboard, with the
@@ -260,10 +262,27 @@ impl Bitboard {
         Bitboard(fill)
     }
 
+    /// An simple iterative function that calculates sliding pieces attacks by repeatedly shifting the bitboard
+    /// in the specified direction until it hits an occlusion.
     #[inline(always)]
     pub const fn sliding_attack(self, occlusion: Bitboard, direction: Direction) -> Self {
         let next = self.occluded_fill(occlusion, direction);
         Bitboard(Bitboard(next.0 | self.0).shift_one(direction).0 | next.0)
+    }
+
+    /// Function for calculating bishop attacks using the sliding attack function in all four diagonal directions.
+    pub fn bishop_raycast(self, occ: Bitboard) -> Self {
+        self.sliding_attack(occ, Direction::NorthEast)
+            | self.sliding_attack(occ, Direction::NorthWest)
+            | self.sliding_attack(occ, Direction::SouthEast)
+            | self.sliding_attack(occ, Direction::SouthWest)
+    }
+
+    pub fn rook_raycast(self, occ: Bitboard) -> Self {
+        self.sliding_attack(occ, Direction::North)
+            | self.sliding_attack(occ, Direction::East)
+            | self.sliding_attack(occ, Direction::South)
+            | self.sliding_attack(occ, Direction::West)
     }
 
     pub fn shift_south(self) -> Self {

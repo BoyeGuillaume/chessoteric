@@ -380,25 +380,25 @@ impl std::fmt::Display for Move {
     }
 }
 
-fn generate_rook_movement(occlusion: Bitboard, origin: Bitboard) -> Bitboard {
+pub fn generate_rook_movement(occlusion: Bitboard, origin: Bitboard) -> Bitboard {
     origin.sliding_attack(occlusion, Direction::East)
         | origin.sliding_attack(occlusion, Direction::West)
         | origin.sliding_attack(occlusion, Direction::North)
         | origin.sliding_attack(occlusion, Direction::South)
 }
 
-fn generate_bishop_movement(occlusion: Bitboard, origin: Bitboard) -> Bitboard {
+pub fn generate_bishop_movement(occlusion: Bitboard, origin: Bitboard) -> Bitboard {
     origin.sliding_attack(occlusion, Direction::NorthEast)
         | origin.sliding_attack(occlusion, Direction::SouthWest)
         | origin.sliding_attack(occlusion, Direction::NorthWest)
         | origin.sliding_attack(occlusion, Direction::SouthEast)
 }
 
-fn generate_queen_movement(occlusion: Bitboard, origin: Bitboard) -> Bitboard {
+pub fn generate_queen_movement(occlusion: Bitboard, origin: Bitboard) -> Bitboard {
     generate_rook_movement(occlusion, origin) | generate_bishop_movement(occlusion, origin)
 }
 
-fn generate_knight_movement(origin: Bitboard) -> Bitboard {
+pub fn generate_knight_movement(origin: Bitboard) -> Bitboard {
     let l1 = (origin.0 >> 1) & 0x7f7f7f7f7f7f7f7f;
     let l2 = (origin.0 >> 2) & 0x3f3f3f3f3f3f3f3f;
     let r1 = (origin.0 << 1) & 0xfefefefefefefefe;
@@ -409,7 +409,7 @@ fn generate_knight_movement(origin: Bitboard) -> Bitboard {
     Bitboard(attacks)
 }
 
-fn generate_king_movement(origin: Bitboard) -> Bitboard {
+pub fn generate_king_movement(origin: Bitboard) -> Bitboard {
     origin.surrounding_mask()
 }
 

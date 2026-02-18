@@ -1,6 +1,8 @@
-use chessoteric_core::{moves::generate_moves, study::StudyEntry};
+use chessoteric_core::{
+    bitboard::Bitboard, magic::Magic, moves::generate_moves, study::StudyEntry,
+};
 use criterion::{Criterion, criterion_group, criterion_main};
-use pretty_assertions::assert_eq;
+use rand::{Rng, SeedableRng};
 
 fn bench_move_generation(c: &mut Criterion, studies: Vec<StudyEntry>) {
     for study in studies.iter() {
@@ -17,55 +19,56 @@ fn bench_move_generation(c: &mut Criterion, studies: Vec<StudyEntry>) {
     }
 }
 
-// fn bench_castling_move_generation(c: &mut Criterion) {
-//     let studies = chessoteric_core::study::get_castling_study();
-//     bench_move_generation(c, studies);
-// }
+fn rook_bishop_raycast_bench(c: &mut Criterion) {
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(0x42);
+    let magic = Magic::generate();
 
-// fn bench_checkmates_move_generation(c: &mut Criterion) {
-//     let studies = chessoteric_core::study::get_checkmates_study();
-//     bench_move_generation(c, studies);
-// }
+    c.bench_function("rook_raycast", |b| {
+        b.iter(|| {
+            let nextu32 = rng.next_u32();
+            let filter_count = (nextu32 % 3) as usize; // Not uniform, but good enough for our purposes
+            let square = ((nextu32 >> 2) % 64) as u8;
+            let mut occupency = Bitboard(rng.next_u64());
+            for _ in 0..filter_count {
+                occupency.0 &= rng.next_u64();
+            }
+
+            let value = magic.rook_raycast(square, occupency);
+            std::hint::black_box(value);
+        });
+    });
+
+    c.bench_function("bishop_raycast", |b| {
+        b.iter(|| {
+            let nextu32 = rng.next_u32();
+            let filter_count = (nextu32 % 3) as usize; // Not uniform, but good enough for our purposes
+            let square = ((nextu32 >> 2) % 64) as u8;
+            let mut occupency = Bitboard(rng.next_u64());
+            for _ in 0..filter_count {
+                occupency.0 &= rng.next_u64();
+            }
+
+            let value = magic.bishop_raycast(square, occupency);
+            // let value = Bitboard(1 << square).bishop_raycast(occupency).0;
+            std::hint::black_box(value);
+        });
+    });
+}
 
 fn bench_famous_move_generation(c: &mut Criterion) {
     let studies = chessoteric_core::study::get_famous_study();
     bench_move_generation(c, studies);
 }
 
-// fn bench_pawns_move_generation(c: &mut Criterion) {
-//     let studies = chessoteric_core::study::get_pawns_study();
-//     bench_move_generation(c, studies);
-// }
-
-// fn bench_promotions_move_generation(c: &mut Criterion) {
-//     let studies = chessoteric_core::study::get_promotions_study();
-//     bench_move_generation(c, studies);
-// }
-
-// fn bench_stalemates_move_generation(c: &mut Criterion) {
-//     let studies = chessoteric_core::study::get_stalemates_study();
-//     bench_move_generation(c, studies);
-// }
-
 fn bench_standard_move_generation(c: &mut Criterion) {
     let studies = chessoteric_core::study::get_standard_study();
     bench_move_generation(c, studies);
 }
 
-// fn bench_taxing_move_generation(c: &mut Criterion) {
-//     let studies = chessoteric_core::study::get_taxing_study();
-//     bench_move_generation(c, studies);
-// }
-
 criterion_group!(
     move_generation_benches,
-    // bench_castling_move_generation,
-    // bench_checkmates_move_generation,
     bench_famous_move_generation,
-    // bench_pawns_move_generation,
-    // bench_promotions_move_generation,
-    // bench_stalemates_move_generation,
     bench_standard_move_generation,
-    // bench_taxing_move_generation
+    rook_bishop_raycast_bench,
 );
 criterion_main!(move_generation_benches);

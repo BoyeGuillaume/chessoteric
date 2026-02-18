@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 
+use chessoteric_core::bitboard::Bitboard;
 use clap::Parser;
 pub mod state;
 
@@ -23,7 +24,7 @@ pub struct StermArgs {
     pub ai: Option<String>,
 }
 
-fn main() {
+fn _main() {
     let args = StermArgs::parse();
 
     // Load the chess position from the FEN string
@@ -100,4 +101,14 @@ fn main() {
             args[0]
         );
     }
+}
+
+fn main() {
+    let square = 37u8;
+    let occ = Bitboard(0x8004206a04603020);
+    // let occ = Bitboard::empty();
+    let raycast = Bitboard::rook_eff_raycast(square, occ).0;
+    let mask = Bitboard::rook_mask(square).0;
+    println!("Raycast result: {raycast:016x}");
+    println!("Mask result: {mask:016x}");
 }
