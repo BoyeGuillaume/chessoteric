@@ -410,11 +410,7 @@ fn generate_knight_movement(origin: Bitboard) -> Bitboard {
 }
 
 fn generate_king_movement(origin: Bitboard) -> Bitboard {
-    let attacks = ((origin.0 << 8) | (origin.0 >> 8)) // North and South
-        | ((origin.0 & !Bitboard::FILE_H) << 1) | ((origin.0 & !Bitboard::FILE_A) >> 1) // East and West
-        | ((origin.0 & !Bitboard::FILE_H) << 9) | ((origin.0 & !Bitboard::FILE_A) >> 9) // NorthEast and SouthWest
-        | ((origin.0 & !Bitboard::FILE_H) >> 7) | ((origin.0 & !Bitboard::FILE_A) << 7); // NorthWest and SouthEast
-    Bitboard(attacks)
+    origin.surrounding_mask()
 }
 
 fn generate_pawn_attacks(origin: Bitboard, color: Color) -> Bitboard {

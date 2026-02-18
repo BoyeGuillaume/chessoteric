@@ -23,6 +23,7 @@ pub fn all_commands() -> Vec<Box<dyn Command>> {
         Box::new(LoadAiCommand),
         Box::new(DisplayBoardCommand),
         Box::new(MoveCommand),
+        Box::new(EvalCommand),
         Box::new(UciCommand),
         Box::new(ListMovesCommand),
         Box::new(GoCommand),
@@ -381,6 +382,22 @@ impl Command for GoCommand {
 
             eprintln!("No AI loaded. Use 'load_ai <ai_name>' to load an AI.");
         }
+    }
+}
+
+pub struct EvalCommand;
+impl Command for EvalCommand {
+    fn name(&self) -> &str {
+        "eval"
+    }
+
+    fn description(&self) -> &str {
+        "Perform static evaluation of the current position using a simple material count"
+    }
+
+    fn execute(&self, state: &mut AppState, _args: &[String]) {
+        let score = chessoteric_core::eval::evaluate(&state.board);
+        println!("Evaluation score: {}", score);
     }
 }
 

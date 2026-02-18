@@ -54,7 +54,7 @@ class Game(threading.Thread):
                 self.handle_chat_line(event)
     
     def generate_next_move(self):
-        limit = chess.engine.Limit(time=2.0)
+        limit = chess.engine.Limit(time=5.0)
         elem = self.engine.play(self.board, limit=limit)
 
         if elem.move is None:

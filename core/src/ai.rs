@@ -1,5 +1,6 @@
 use crate::{board::Board, moves::Move};
 
+pub mod chessoteric;
 pub mod random;
 pub mod simple;
 

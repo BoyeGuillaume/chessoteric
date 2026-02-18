@@ -8,36 +8,13 @@ use strum::{EnumIs, EnumTryAs};
 
 use crate::{
     ai::{Ai, AiLimit, AiResult},
-    board::{Board, Color, Piece},
+    board::{Board, Color},
+    eval::evaluate,
     moves::{Move, generate_moves},
     tree::{Tree, TreeNodeRef},
 };
 
 use super::AiType;
-
-fn simple_evaluation(board: &crate::board::Board) -> f32 {
-    // A very simple evaluation function that just counts material
-    let mut score: f32 = 0.0;
-    for piece in Piece::colorless_iter() {
-        let bitboard = *board.get(piece);
-
-        let count_total = bitboard.count_ones();
-        let count_white = (bitboard & board.white).count_ones();
-        let count_black = count_total - count_white;
-
-        let value = match piece {
-            Piece::Queen => 9.0,
-            Piece::Rook => 5.0,
-            Piece::Bishop => 3.0,
-            Piece::Knight => 3.0,
-            Piece::Pawn => 1.0,
-            _ => 0.0,
-        };
-        score += value * (count_white as f32 - count_black as f32);
-    }
-
-    score
-}
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -218,7 +195,7 @@ impl SimpleAiCtx {
                                 entry.push_child(TreeEntry {
                                     r#move: Some(mv),
                                     depth: entry.depth + 1,
-                                    score: simple_evaluation(&new_board),
+                                    score: evaluate(&new_board),
                                     board: new_board,
                                     flags: TerminalFlags::empty(),
                                 });
@@ -424,7 +401,7 @@ impl Ai for SimpleAi {
             tree: Tree::new(TreeEntry {
                 r#move: None,
                 depth: 0,
-                score: simple_evaluation(board),
+                score: evaluate(board),
                 board: board.clone(),
                 flags: TerminalFlags::empty(),
             }),

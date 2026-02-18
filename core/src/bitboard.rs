@@ -1,3 +1,5 @@
+use crate::board::Color;
+
 /// Bitboard representation of a chess position. Each bit represents a square on the chessboard, with the
 /// least significant bit representing the a1 square and the most significant bit representing the h8 square.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -196,6 +198,27 @@ impl Bitboard {
 
     pub const SHIFT: [u32; 8] = [9, 1, 57, 56, 55, 63, 7, 8];
 
+    /// Find the pawn connected mask for a bitboard (basically expand the bitboard in the north and south directions based on color).
+    pub const fn connected_mask(self, color: Color) -> Self {
+        match color {
+            Color::White => {
+                Bitboard(((self.0 >> 7) & !Self::FILE_A) | ((self.0 >> 9) & !Self::FILE_H))
+            }
+            Color::Black => {
+                Bitboard(((self.0 << 7) & !Self::FILE_H) | ((self.0 << 9) & !Self::FILE_A))
+            }
+        }
+    }
+
+    /// Mask surrounding squares for a given bitboard (think of it as a king's move mask).
+    pub const fn surrounding_mask(self) -> Self {
+        Bitboard(
+            ((self.0 << 8) | (self.0 >> 8)) // North and South
+            | ((self.0 & !Bitboard::FILE_H) << 1) | ((self.0 & !Bitboard::FILE_A) >> 1) // East and West
+            | ((self.0 & !Bitboard::FILE_H) << 9) | ((self.0 & !Bitboard::FILE_A) >> 9) // NorthEast and SouthWest
+            | ((self.0 & !Bitboard::FILE_H) >> 7) | ((self.0 & !Bitboard::FILE_A) << 7), // NorthWest and SouthEast
+        )
+    }
     /// Generate an empty bitboard (i.e., a bitboard with all bits set to 0).
     pub const fn empty() -> Self {
         Bitboard(0)

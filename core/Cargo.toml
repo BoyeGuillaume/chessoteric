@@ -12,9 +12,15 @@ strum = { version = "0.27.2", features = ["derive"] }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
+criterion = "0.8.2"
+
+[[bench]]
+name = "chessoteric_bench"
+harness = false
 
 [features]
-default = ["study", "alpha_beta_soft_pruning"]
+default = ["study"]
 study = []
 
 alpha_beta_soft_pruning = []
+eval_larry_kaufman = []

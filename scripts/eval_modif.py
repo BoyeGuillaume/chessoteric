@@ -4,6 +4,7 @@ from os.path import join, dirname, abspath
 
 features = [
     "alpha_beta_soft_pruning",
+    "eval_larry_kaufman",
 ]
 
 def ask_features():
